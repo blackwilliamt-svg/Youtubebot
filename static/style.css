@@ -153,6 +153,17 @@ button:hover { filter: brightness(1.1); }
 .snapshot-status { color: var(--muted); font-size: 0.8rem; max-width: 320px; }
 .hint { color: var(--muted); font-size: 0.85rem; }
 
+.import-url-form {
+  display: flex; gap: 0.6rem; align-items: center;
+  margin: 1rem 0 1.5rem;
+  padding: 0.75rem 1rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.import-url-form input[type=url] { flex: 1; min-width: 200px; }
+.import-url-form select { width: auto; min-width: 140px; }
+
 .nav-badge {
   background: var(--accent);
   color: #0b0d10;

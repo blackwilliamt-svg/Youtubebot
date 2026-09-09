@@ -29,10 +29,20 @@ scraper/snapshot.py     manual "Run Test Snapshot" button -- same ranking
                         (with a delay between categories) instead of
                         across everything
 
+manual_import.py        manual "paste any video URL" import -- yt-dlp
+                        probes the URL first (fails fast and clearly on
+                        an unsupported site, a playlist, or a bad
+                        duration), then reuses scraper/downloader.py so
+                        the result lands in the exact same media/
+                        layout as a scraped clip. Isolated from
+                        run_hourly.py/snapshot.py -- nothing in scraper/
+                        knows this module exists.
+
 app.py (Flask, gunicorn)      dashboard, bound to 127.0.0.1:8080 only
   ├─ /triage                   one untriaged item at a time, ✓ keep or
   │                            ✗ permanently delete -- first pass filter
   ├─ /review                   kept items by category, checkboxes ->
+  │                            also has the "paste a URL" import form
   ├─ /build                    sequencer: add clips/images/GIFs + manual
   │                            library/reactions/ clips, reorder with
   │                            ▲▼, submit -> background compiler/build.py
@@ -155,6 +165,36 @@ the exact same ranking, 24h dedup, and per-source rate-limit
 backoff/retry as the hourly job, it just doesn't wait for the clock.
 Results land in the normal `media/YYYY-MM-DD/<category>/` folder and go
 through `/triage` like anything else.
+
+## Manual "paste any video URL" import
+
+`/review` also has a "paste a URL" form (a plain input + a category
+picker, since there's no subreddit to infer one from) for pulling in a
+video from basically anywhere -- not just Reddit/YouTube/Vimeo. It's a
+manual, on-demand path, not a new scraper category: nothing about it runs
+on a schedule, and nothing in `scraper/` (run_hourly.py, snapshot.py, the
+source modules) knows it exists.
+
+- **`manual_import.py`** probes the URL with yt-dlp first (metadata only,
+  no download) so an unsupported site, a playlist link, or a video
+  outside `MIN_CLIP_DURATION_SEC`/`MAX_CLIP_DURATION_SEC` fails fast with
+  a clear, specific message -- never a stack trace, never a wedged
+  pipeline. yt-dlp itself is what gives this "virtually any site" reach:
+  it supports thousands of extractors beyond YouTube/Vimeo out of the
+  box.
+- A successful probe reuses `scraper/downloader.py`'s existing
+  `download_and_store()` for the real download/compress/thumbnail --
+  the exact same `media/YYYY-MM-DD/<category>/` layout, JSON sidecar, and
+  24h dedup log (keyed under `source="manual"`) as a scraped clip gets.
+  `scraper/retention.py`'s optional cleanup sweep picks it up the same
+  way too, with no special-casing.
+- Runs as a background job (same `/jobs/<id>` polling pattern as a build
+  or a YouTube upload) since a download can take a little while; a failed
+  import is logged (`log.warning`, with the URL) as well as shown in the
+  job's error message.
+- Lands as a normal untriaged clip (`triaged=0`) -- it goes through
+  `/triage` next exactly like anything scraped, then `/review` and
+  `/build` from there.
 
 ## Local setup (dev machine)
 

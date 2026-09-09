@@ -18,6 +18,17 @@
   </div>
 </div>
 
+<form method="post" action="{{ url_for('import_url_run') }}" class="import-url-form">
+  <input type="url" name="url" placeholder="Paste a video URL from any site (yt-dlp-supported) …" required>
+  <select name="category" required>
+    <option value="" disabled selected>Category…</option>
+    {% for cat in by_category.keys() %}
+      <option value="{{ cat }}">{{ cat }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Import</button>
+</form>
+
 <form method="get" action="{{ url_for('build_screen') }}" id="build-form">
   <input type="hidden" name="date" value="{{ date_str }}">
   {% for category, clips in by_category.items() %}

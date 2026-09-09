@@ -25,6 +25,7 @@ import config
 import db
 import library
 from compiler.build import BuildError, build_compilation
+from manual_import import ManualImportError, import_url
 from scraper.snapshot import run_test_snapshot
 from scraper.subreddits import CATEGORIES
 from youtube_upload import oauth as yt_oauth
@@ -288,6 +289,43 @@ def snapshot_run():
 
     threading.Thread(target=_worker, daemon=True).start()
     return jsonify({"job_id": job_id})
+
+
+# --- manual "paste any video URL" import -------------------------------
+# Additive and isolated from the scrape/rank/dedup pipeline -- see
+# manual_import.py's module docstring. Reuses the same background-job +
+# /jobs/<id> polling pattern as /build/run and the YouTube upload below,
+# and lands the result in the exact same triaged=0 state a scraped clip
+# gets, so it goes through /triage next like anything else.
+
+@app.route("/import/url", methods=["POST"])
+@login_required
+def import_url_run():
+    url = (request.form.get("url") or "").strip()
+    category = (request.form.get("category") or "").strip()
+    if not url:
+        flash("Paste a URL first.", "error")
+        return redirect(url_for("review"))
+    if category not in CATEGORIES:
+        flash("Pick a category for the import.", "error")
+        return redirect(url_for("review"))
+
+    job_id = db.create_job("import")
+
+    def _worker():
+        db.update_job(job_id, status="running", message=f"Downloading {url} ...")
+        try:
+            clip_id = import_url(url, category)
+            db.update_job(job_id, status="done", ref_id=clip_id,
+                           message="Imported -- check Triage to keep or delete it.")
+        except ManualImportError as exc:
+            db.update_job(job_id, status="error", message=str(exc))
+        except Exception:
+            log.exception("Unexpected error importing %s", url)
+            db.update_job(job_id, status="error", message="Unexpected error, check server logs")
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return redirect(url_for("job_status_page", job_id=job_id))
 
 
 # --- compilations / upload -------------------------------------------------

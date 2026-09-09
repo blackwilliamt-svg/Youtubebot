@@ -1,11 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Job #{{ job.id }}{% endblock %}
 {% block content %}
+{% set done_url = url_for('triage') if job.kind == 'import' else url_for('compilations') %}
+{% set done_label = 'Go to triage' if job.kind == 'import' else 'Go to compilations' %}
 <h1>Job #{{ job.id }} <span class="status status-{{ job.status }}" id="status">{{ job.status }}</span></h1>
 <p id="message">{{ job.message or '' }}</p>
-<p><a href="{{ url_for('compilations') }}">Go to compilations →</a></p>
+<p><a href="{{ done_url }}">{{ done_label }} →</a></p>
 
 <script>
+  const doneUrl = {{ done_url|tojson }};
   async function poll() {
     const res = await fetch("{{ url_for('job_status_api', job_id=job.id) }}");
     const job = await res.json();
@@ -15,7 +18,7 @@
     if (job.status === 'pending' || job.status === 'running') {
       setTimeout(poll, 2000);
     } else if (job.status === 'done') {
-      setTimeout(() => { window.location = "{{ url_for('compilations') }}"; }, 1500);
+      setTimeout(() => { window.location = doneUrl; }, 1500);
     }
   }
   setTimeout(poll, 2000);
