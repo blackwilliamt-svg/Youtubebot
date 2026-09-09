@@ -1,0 +1,11 @@
+[Unit]
+Description=Run meme-pipeline scrape hourly
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=120
+Persistent=true
+Unit=meme-scrape.service
+
+[Install]
+WantedBy=timers.target

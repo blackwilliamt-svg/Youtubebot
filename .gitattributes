@@ -1,0 +1,7 @@
+# These run on the Linux droplet -- force LF regardless of the checkout
+# platform's autocrlf setting, or bash chokes on a CRLF shebang line.
+*.sh text eol=lf
+*.py text eol=lf
+*.service.template text eol=lf
+*.timer text eol=lf
+*.sql text eol=lf

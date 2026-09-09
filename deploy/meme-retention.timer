@@ -1,0 +1,10 @@
+[Unit]
+Description=Run meme-pipeline retention pass daily (optional)
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+Unit=meme-retention.service
+
+[Install]
+WantedBy=timers.target

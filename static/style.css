@@ -1,0 +1,138 @@
+:root {
+  color-scheme: dark;
+  --bg: #14161a;
+  --panel: #1d2026;
+  --border: #2c3038;
+  --text: #e7e9ee;
+  --muted: #9aa1ac;
+  --accent: #5b8cff;
+  --error: #ff6b6b;
+  --success: #52c98a;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.topnav {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 0.75rem 1.5rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.topnav a { color: var(--text); text-decoration: none; }
+.topnav a.brand { font-weight: 700; color: var(--accent); }
+.topnav a.right { margin-left: auto; color: var(--muted); }
+.topnav a:hover { color: var(--accent); }
+
+main { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+
+h1 { margin-top: 0; }
+
+.login-box {
+  max-width: 320px;
+  margin: 4rem auto;
+  padding: 2rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.login-box form { display: flex; flex-direction: column; gap: 1rem; }
+label { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.85rem; color: var(--muted); }
+input, textarea, select, button {
+  font: inherit;
+  background: #0f1114;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.6rem;
+}
+button {
+  background: var(--accent);
+  color: #0b0d10;
+  border: none;
+  font-weight: 600;
+  cursor: pointer;
+}
+button:hover { filter: brightness(1.1); }
+
+.flashes { margin-bottom: 1rem; }
+.flash { padding: 0.6rem 0.9rem; border-radius: 8px; margin-bottom: 0.5rem; }
+.flash-error { background: #3a1c1c; color: var(--error); }
+.flash-success { background: #17301f; color: var(--success); }
+
+.notice {
+  background: #2a2410;
+  border: 1px solid #55491a;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+}
+
+.review-header { display: flex; align-items: center; justify-content: space-between; }
+
+.category-block { margin: 1.5rem 0; }
+.category-block h2 { text-transform: capitalize; border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; }
+.category-block .count { color: var(--muted); font-weight: 400; font-size: 0.9rem; }
+.empty { color: var(--muted); font-style: italic; }
+
+.clip-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 1rem;
+}
+.clip-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.6rem;
+  display: block;
+  cursor: pointer;
+}
+.clip-card input[type=checkbox] { margin-bottom: 0.4rem; }
+.clip-card video { width: 100%; border-radius: 6px; background: #000; aspect-ratio: 9/16; object-fit: cover; }
+.clip-meta { font-size: 0.8rem; margin-top: 0.4rem; }
+.clip-title { font-weight: 600; margin-bottom: 0.2rem; }
+.clip-sub { color: var(--muted); }
+.clip-meta a { color: var(--accent); font-size: 0.75rem; }
+
+.build-bar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  margin-top: 1.5rem;
+}
+
+.comp-list { display: flex; flex-direction: column; gap: 1.5rem; }
+.comp-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem;
+  max-width: 420px;
+}
+.comp-head { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.6rem; }
+.comp-date { color: var(--muted); font-size: 0.8rem; margin-left: auto; }
+.comp-card video { width: 100%; border-radius: 8px; background: #000; aspect-ratio: 9/16; }
+.comp-meta { color: var(--muted); font-size: 0.85rem; margin: 0.3rem 0; }
+.upload-form { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.6rem; }
+
+.status { font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 999px; text-transform: uppercase; }
+.status-ready, .status-done { background: #17301f; color: var(--success); }
+.status-failed, .status-error { background: #3a1c1c; color: var(--error); }
+.status-building, .status-running, .status-pending { background: #2a2410; color: #e0c15a; }
+
+.error { color: var(--error); white-space: pre-wrap; font-size: 0.8rem; }

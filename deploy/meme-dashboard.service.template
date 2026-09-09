@@ -1,0 +1,16 @@
+[Unit]
+Description=meme-pipeline review dashboard (gunicorn, localhost only)
+After=network.target
+
+[Service]
+Type=simple
+User=__APP_USER__
+WorkingDirectory=__APP_DIR__
+EnvironmentFile=__APP_DIR__/.env
+ExecStart=__APP_DIR__/.venv/bin/gunicorn --bind 127.0.0.1:__PORT__ --workers 1 --threads 4 --timeout 120 wsgi:app
+Restart=on-failure
+RestartSec=5
+MemoryMax=700M
+
+[Install]
+WantedBy=multi-user.target

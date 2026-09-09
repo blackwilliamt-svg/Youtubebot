@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Compilations{% endblock %}
+{% block content %}
+<h1>Compilations</h1>
+
+{% if youtube_configured and not youtube_connected %}
+  <div class="notice">
+    YouTube isn't connected yet. <a href="{{ url_for('youtube_authorize') }}">Connect your YouTube account</a> to enable uploads.
+  </div>
+{% elif not youtube_configured %}
+  <div class="notice">
+    YT_OAUTH_CLIENT_ID / YT_OAUTH_CLIENT_SECRET aren't set in .env, so upload is disabled until you add them.
+  </div>
+{% endif %}
+
+{% if not compilations %}
+  <p class="empty">No compilations built yet -- select clips on the Review page and hit "Build compilation".</p>
+{% endif %}
+
+<div class="comp-list">
+  {% for c in compilations %}
+    <div class="comp-card">
+      <div class="comp-head">
+        <strong>Compilation #{{ c.id }}</strong>
+        <span class="status status-{{ c.status }}">{{ c.status }}</span>
+        <span class="comp-date">{{ c.created_at[:19] }}</span>
+      </div>
+
+      {% if c.status == 'ready' and c.output_rel %}
+        <video src="{{ url_for('media', subpath=c.output_rel) }}" controls preload="none"></video>
+        <div class="comp-meta">{{ '%.1f'|format(c.duration_sec or 0) }}s</div>
+
+        {% if c.youtube_url %}
+          <p>Uploaded: <a href="{{ c.youtube_url }}" target="_blank" rel="noopener">{{ c.youtube_url }}</a></p>
+        {% elif youtube_connected %}
+          <form method="post" action="{{ url_for('upload_compilation', compilation_id=c.id) }}" class="upload-form">
+            <input type="text" name="title" placeholder="Video title" required>
+            <textarea name="description" placeholder="Description (optional)"></textarea>
+            <select name="privacy_status">
+              <option value="private" selected>Private</option>
+              <option value="unlisted">Unlisted</option>
+              <option value="public">Public</option>
+            </select>
+            <button type="submit">Upload to YouTube</button>
+          </form>
+        {% endif %}
+      {% elif c.status == 'failed' %}
+        <p class="error">{{ c.error }}</p>
+      {% else %}
+        <p>Building…</p>
+      {% endif %}
+    </div>
+  {% endfor %}
+</div>
+{% endblock %}

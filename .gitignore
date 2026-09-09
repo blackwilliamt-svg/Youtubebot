@@ -1,0 +1,25 @@
+# secrets
+.env
+secrets/
+*.token.json
+youtube_token.json
+
+# runtime data
+media/
+pipeline.db
+pipeline.db-wal
+pipeline.db-shm
+.locks/
+sfx/*.wav
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# os/editor
+.DS_Store
+.idea/
+.vscode/

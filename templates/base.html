@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Meme Pipeline{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% if session.get('logged_in') %}
+  <nav class="topnav">
+    <a href="{{ url_for('review') }}" class="brand">meme-pipeline</a>
+    <a href="{{ url_for('review') }}">Review</a>
+    <a href="{{ url_for('compilations') }}">Compilations</a>
+    <a href="{{ url_for('logout') }}" class="right">Logout</a>
+  </nav>
+  {% endif %}
+  <main>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flashes">
+          {% for category, message in messages %}
+            <div class="flash flash-{{ category }}">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
