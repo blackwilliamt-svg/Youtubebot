@@ -1,5 +1,5 @@
 """
-Curated list of trending meme/fail/video subreddits, mapped to the five
+Curated list of trending meme/fail/video subreddits, mapped to the six
 output categories used for the /media/YYYY-MM-DD/<category>/ folder layout
 and the dashboard grouping. Tune freely -- this is just a starting set.
 """
@@ -37,6 +37,8 @@ SUBREDDIT_CATEGORY = {
     "perfectlycutscreams": "oddly-satisfying",
     "BeAmazed": "oddly-satisfying",
     "Damnthatsinteresting": "oddly-satisfying",
+    # --- mildly infuriating --------------------------------------------
+    "mildlyinfuriating": "mildly-infuriating",
 }
 
 ALL_SUBREDDITS = list(SUBREDDIT_CATEGORY.keys())
@@ -45,3 +47,7 @@ CATEGORIES = sorted(set(SUBREDDIT_CATEGORY.values()))
 
 def category_for_subreddit(name: str) -> str:
     return SUBREDDIT_CATEGORY.get(name, "fails")
+
+
+def subreddits_for_category(category: str) -> list[str]:
+    return [name for name, cat in SUBREDDIT_CATEGORY.items() if cat == category]

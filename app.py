@@ -23,7 +23,9 @@ from werkzeug.security import check_password_hash
 
 import config
 import db
+import library
 from compiler.build import BuildError, build_compilation
+from scraper.snapshot import run_test_snapshot
 from scraper.subreddits import CATEGORIES
 from youtube_upload import oauth as yt_oauth
 from youtube_upload.upload import UploadError, upload_video
@@ -42,6 +44,17 @@ if not config.DASHBOARD_PASSWORD_HASH:
     log.warning("DASHBOARD_PASSWORD_HASH not set in .env -- no password will ever match; run gen_password_hash.py.")
 
 db.init_db()
+library.ensure_dirs()
+
+
+@app.context_processor
+def _inject_nav_counts():
+    if not session.get("logged_in"):
+        return {}
+    try:
+        return {"untriaged_count": db.count_untriaged()}
+    except Exception:
+        return {"untriaged_count": 0}
 
 
 # --- auth ------------------------------------------------------------------
@@ -100,7 +113,7 @@ def _media_rel(path_str):
 @login_required
 def review():
     date_str = request.args.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    clips = db.get_clips_for_date(date_str)
+    clips = db.get_clips_for_date(date_str)  # triaged_only=True by default -- untriaged items live in /triage
     for c in clips:
         c["video_rel"] = _media_rel(c.get("file_path"))
         c["thumb_rel"] = _media_rel(c.get("thumb_path"))
@@ -115,20 +128,131 @@ def review():
     )
 
 
-@app.route("/build", methods=["POST"])
+# --- triage (first-pass accept/reject, one item at a time) -----------------
+
+@app.route("/triage")
 @login_required
-def build():
-    clip_ids = [int(v) for v in request.form.getlist("clip_id")]
-    if not clip_ids:
-        flash("Select at least one clip first.", "error")
-        return redirect(url_for("review"))
+def triage():
+    date_str = request.args.get("date") or None  # None = oldest untriaged across all dates
+    item = db.get_next_untriaged_clip(date_str)
+    if item:
+        item["video_rel"] = _media_rel(item.get("file_path"))
+    remaining = db.count_untriaged(date_str)
+    return render_template("triage.html", item=item, remaining=remaining, date_str=date_str)
+
+
+@app.route("/triage/<int:clip_id>/keep", methods=["POST"])
+@login_required
+def triage_keep(clip_id):
+    db.set_triaged(clip_id, True)
+    return redirect(url_for("triage", date=request.form.get("date") or None))
+
+
+@app.route("/triage/<int:clip_id>/reject", methods=["POST"])
+@login_required
+def triage_reject(clip_id):
+    clip = db.delete_clip(clip_id)
+    if clip:
+        for key in ("file_path", "thumb_path"):
+            p = clip.get(key)
+            if p:
+                Path(p).unlink(missing_ok=True)
+        if clip.get("file_path"):
+            Path(clip["file_path"]).with_suffix(".json").unlink(missing_ok=True)
+        log.info("Triage: deleted clip id=%d (%s)", clip_id, clip.get("title", ""))
+    return redirect(url_for("triage", date=request.form.get("date") or None))
+
+
+# --- build sequencer (pick clips/images/gifs + manually-inserted reaction
+# clips, arrange the order, then hand the ordered ref list to /build/run) ---
+
+def _resolve_sequence(refs: list[str]) -> list[dict]:
+    """
+    ref -> resolved item dict with the fields compiler.build.build_compilation
+    needs. "clip:<id>" resolves against the DB; "reaction:<category>/<file>"
+    resolves against library/reactions/ (path-traversal guarded). Unknown
+    or missing refs are silently dropped.
+    """
+    items = []
+    for ref in refs:
+        kind, _, rest = ref.partition(":")
+        if kind == "clip":
+            if not rest.isdigit():
+                continue
+            clip = db.get_clip(int(rest))
+            if not clip or not clip.get("file_path"):
+                continue
+            items.append({
+                "ref": ref, "id": clip["id"], "media_type": clip["media_type"],
+                "category": clip["category"], "file_path": clip["file_path"],
+                "title": clip.get("title") or "",
+            })
+        elif kind == "reaction":
+            try:
+                path = (config.REACTIONS_LIBRARY_DIR / rest).resolve()
+                path.relative_to(config.REACTIONS_LIBRARY_DIR.resolve())
+            except (ValueError, OSError):
+                continue
+            if not path.exists():
+                continue
+            category = rest.split("/", 1)[0]
+            media_type = "gif" if path.suffix.lower() == ".gif" else "video"
+            items.append({
+                "ref": ref, "id": None, "media_type": media_type,
+                "category": category, "file_path": str(path),
+                "title": path.stem,
+            })
+    return items
+
+
+@app.route("/build")
+@login_required
+def build_screen():
+    date_str = request.args.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    requested_ids = [v for v in request.args.getlist("clip_id") if v.isdigit()]
+    initial_items = _resolve_sequence([f"clip:{i}" for i in requested_ids])
+    for it in initial_items:
+        rel = _media_rel(it["file_path"])
+        it["url"] = url_for("media", subpath=rel) if rel else ""
+
+    clips = db.get_clips_for_date(date_str)
+    for c in clips:
+        rel = _media_rel(c.get("file_path"))
+        c["url"] = url_for("media", subpath=rel) if rel else ""
+    by_category = {cat: [] for cat in CATEGORIES}
+    for c in clips:
+        by_category.setdefault(c["category"], []).append(c)
+
+    reactions_by_category = {
+        cat: [p.name for p in paths] for cat, paths in library.list_reaction_clips().items()
+    }
+
+    return render_template(
+        "build.html",
+        date_str=date_str,
+        by_category=by_category,
+        reactions_by_category=reactions_by_category,
+        initial_items=initial_items,
+        available_dates=db.get_available_dates(),
+        soft_warning_count=10,
+    )
+
+
+@app.route("/build/run", methods=["POST"])
+@login_required
+def build_run():
+    refs = request.form.getlist("ref")
+    items = _resolve_sequence(refs)
+    if not items:
+        flash("Add at least one item to the sequence first.", "error")
+        return redirect(url_for("build_screen"))
 
     job_id = db.create_job("build")
 
     def _worker():
         db.update_job(job_id, status="running", message="Building compilation...")
         try:
-            result = build_compilation(clip_ids)
+            result = build_compilation(items)
             db.update_job(job_id, status="done", ref_id=result["id"], message="Ready")
         except BuildError as exc:
             db.update_job(job_id, status="error", message=str(exc))
@@ -138,6 +262,32 @@ def build():
 
     threading.Thread(target=_worker, daemon=True).start()
     return redirect(url_for("job_status_page", job_id=job_id))
+
+
+# --- manual test snapshot ---------------------------------------------
+
+@app.route("/snapshot/run", methods=["POST"])
+@login_required
+def snapshot_run():
+    job_id = db.create_job("snapshot")
+
+    def _progress(category, total_so_far):
+        db.update_job(job_id, message=f"Running... ({category} done, {total_so_far} item(s) so far)")
+
+    def _worker():
+        db.update_job(job_id, status="running", message="Running...")
+        try:
+            result = run_test_snapshot(progress_cb=_progress)
+            if "error" in result:
+                db.update_job(job_id, status="error", message=result["error"])
+            else:
+                db.update_job(job_id, status="done", message=f"Done - {result['pulled']} item(s) pulled")
+        except Exception:
+            log.exception("Unexpected error in snapshot job %d", job_id)
+            db.update_job(job_id, status="error", message="Unexpected error, check server logs")
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return jsonify({"job_id": job_id})
 
 
 # --- compilations / upload -------------------------------------------------
@@ -243,6 +393,13 @@ def media(subpath):
     # send_from_directory rejects path traversal (".."), so this is safe
     # to expose the whole media root read-only to logged-in users.
     return send_from_directory(config.MEDIA_ROOT, subpath)
+
+
+@app.route("/library/<path:subpath>")
+@login_required
+def library_file(subpath):
+    """Serves library/{sfx,reactions,music}/... for previewing reaction clips on the build screen."""
+    return send_from_directory(config.LIBRARY_DIR, subpath)
 
 
 if __name__ == "__main__":

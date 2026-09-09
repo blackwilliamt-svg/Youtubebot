@@ -1,29 +1,39 @@
 """
-Stitches the dashboard's selected clips into a single vertical (9:16)
-YouTube Shorts-spec compilation: scale/pad every clip to the same frame,
-crossfade video+audio at each cut, layer a synthesized sound effect on
-top of every cut, and hard-cap the whole thing under MAX_COMPILATION_SEC.
+Stitches a dashboard-assembled sequence of items into a single vertical
+(9:16) YouTube Shorts-spec compilation: materialize any image/gif into a
+short video slide, scale/pad every item to the same frame, crossfade
+video+audio at each cut, layer a sound effect on top of every cut (from
+library/sfx/ if it has something, else a synthesized fallback), duck in
+background music under any segment with no native audio, and hard-cap
+the whole thing under MAX_COMPILATION_SEC.
 
-Entry point: build_compilation(clip_ids) -- run this on a background
-thread from the Flask app (see app.py's /build route); it blocks on
-ffmpeg for anywhere from ~10s to a couple of minutes depending on clip
-count/length, which is too slow for a request/response cycle.
+Entry point: build_compilation(items) -- run this on a background thread
+from the Flask app (see app.py's /build route); it blocks on ffmpeg for
+anywhere from ~10s to a couple of minutes depending on item count/length,
+which is too slow for a request/response cycle.
+
+`items` is a list of already-resolved dicts (see app.py's
+_resolve_sequence), one per sequence position, in stitch order:
+    {"ref": "clip:15" | "reaction:fails/boing.mp4", "id": int|None,
+     "media_type": "video"|"image"|"gif", "category": str, "file_path": str}
 """
 import json
 import logging
-import random
 import subprocess
+import tempfile
 from pathlib import Path
 
 import config
 import db
-from compiler.sfx_gen import list_sfx
+import library
+from compiler import sfx_gen
 from lockutil import pipeline_lock
 
 log = logging.getLogger("meme_pipeline.build")
 
 MAX_PER_CLIP_SEC = 12.0
 MIN_CLIP_SEC = 2.0
+SOFT_WARNING_ITEM_COUNT = 10  # matches the dashboard's own soft warning, kept here just for logging
 
 
 class BuildError(Exception):
@@ -35,19 +45,50 @@ def _run(cmd: list[str]):
     return subprocess.run(cmd, check=True, capture_output=True, text=True)
 
 
-def _probe(path: str) -> dict:
+def _probe(path) -> dict:
     result = _run([
         "ffprobe", "-v", "error", "-print_format", "json",
-        "-show_format", "-show_streams", path,
+        "-show_format", "-show_streams", str(path),
     ])
     return json.loads(result.stdout)
 
 
-def _duration_and_audio(path: str) -> tuple[float, bool]:
+def _duration_and_audio(path) -> tuple[float, bool]:
     info = _probe(path)
     duration = float(info.get("format", {}).get("duration", 0.0))
     has_audio = any(s.get("codec_type") == "audio" for s in info.get("streams", []))
     return duration, has_audio
+
+
+def _slide_vf() -> str:
+    W, H = config.OUTPUT_WIDTH, config.OUTPUT_HEIGHT
+    return (f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
+            f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=30")
+
+
+def _materialize_slide(item: dict, tmp_dir: Path) -> Path:
+    """Video items pass through untouched; image/gif items get rendered to a short silent mp4 slide."""
+    kind = item.get("media_type", "video")
+    if kind == "video":
+        return Path(item["file_path"])
+
+    safe_name = item["ref"].replace(":", "_").replace("/", "_").replace("\\", "_")
+    dest = tmp_dir / f"slide_{safe_name}.mp4"
+    if kind == "image":
+        _run([
+            "ffmpeg", "-y", "-loop", "1", "-i", item["file_path"],
+            "-t", str(config.SLIDE_DURATION_SEC),
+            "-vf", _slide_vf(), "-c:v", "libx264", "-pix_fmt", "yuv420p", str(dest),
+        ])
+    elif kind == "gif":
+        _run([
+            "ffmpeg", "-y", "-stream_loop", "-1", "-i", item["file_path"],
+            "-t", str(config.SLIDE_DURATION_SEC),
+            "-vf", _slide_vf(), "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(dest),
+        ])
+    else:
+        raise BuildError(f"unknown media_type {kind!r} for {item.get('ref')}")
+    return dest
 
 
 def _compute_trims(durations: list[float]) -> list[float]:
@@ -56,9 +97,9 @@ def _compute_trims(durations: list[float]) -> list[float]:
     overlap_total = T * max(n - 1, 0)
     target_sum = config.MAX_COMPILATION_SEC + overlap_total
 
-    # With few clips selected, let each run longer than the usual per-clip
+    # With few items selected, let each run longer than the usual per-clip
     # cap rather than always chopping to MAX_PER_CLIP_SEC (a single
-    # selected clip should get close to the full budget, not 12s of it).
+    # selected item should get close to the full budget, not 12s of it).
     per_clip_cap = max(MAX_PER_CLIP_SEC, target_sum / n)
     capped = [min(d, per_clip_cap) for d in durations]
     total = sum(capped)
@@ -68,17 +109,33 @@ def _compute_trims(durations: list[float]) -> list[float]:
     return capped
 
 
-def _filter_graph(n: int, trims: list[float], has_audio: list[bool], sfx_count: int):
+def _filter_graph(n: int, trims: list[float], has_audio: list[bool],
+                   sfx_files: list[Path], music_choice: list):
     """
-    Returns (filter_complex_str, video_out_label, audio_out_label).
-    Input index layout: [0..n-1] = clips, [n..n+sfx_count-1] = sfx files.
+    Returns (filter_complex_str, video_out_label, audio_out_label, music_paths_in_input_order).
+    ffmpeg input index layout: [0..n-1] = items, [n..n+n_cuts-1] = one sfx
+    file per cut, [n+n_cuts..] = one music file per silent segment that
+    got one (music_choice[i] is None for segments with native audio or an
+    empty music library).
     """
     T = config.TRANSITION_SEC
     W, H = config.OUTPUT_WIDTH, config.OUTPUT_HEIGHT
+    n_cuts = max(n - 1, 0)
     parts = []
 
-    # Per-clip scale/pad/trim -> v{i}, and trim/format audio (or synthesize
-    # silence for clips with no audio track) -> a{i}.
+    # Assign ffmpeg input indices to the music tracks we're actually using.
+    music_input_index = {}
+    ordered_music_paths = []
+    next_idx = n + n_cuts
+    for i in range(n):
+        if music_choice[i] is not None:
+            music_input_index[i] = next_idx
+            ordered_music_paths.append(music_choice[i])
+            next_idx += 1
+
+    # Per-item scale/pad/trim -> v{i}, and trim/format audio -> a{i}
+    # (native audio, ducked background music for a silent segment, or
+    # plain silence if there's no music library at all).
     for i in range(n):
         parts.append(
             f"[{i}:v]trim=duration={trims[i]:.3f},setpts=PTS-STARTPTS,"
@@ -90,10 +147,20 @@ def _filter_graph(n: int, trims: list[float], has_audio: list[bool], sfx_count: 
                 f"[{i}:a]atrim=duration={trims[i]:.3f},asetpts=PTS-STARTPTS,"
                 f"aformat=sample_rates=44100:channel_layouts=stereo[a{i}]"
             )
+        elif i in music_input_index:
+            midx = music_input_index[i]
+            parts.append(
+                f"[{midx}:a]atrim=duration={trims[i]:.3f},asetpts=PTS-STARTPTS,"
+                f"volume={config.MUSIC_DUCK_VOLUME},"
+                f"aformat=sample_rates=44100:channel_layouts=stereo[a{i}]"
+            )
         else:
             parts.append(
                 f"anullsrc=r=44100:cl=stereo,atrim=duration={trims[i]:.3f}[a{i}]"
             )
+
+    if n == 1:
+        return ";".join(parts), "v0", "a0", ordered_music_paths
 
     # Chain crossfades. Track cumulative length of the joined-so-far stream.
     cur_v = "v0"
@@ -114,14 +181,14 @@ def _filter_graph(n: int, trims: list[float], has_audio: list[bool], sfx_count: 
         cum_duration = cum_duration + trims[i] - T
         cur_v, cur_a = out_v, out_a
 
-    if n == 1:
-        return ";".join(parts), "v0", "a0"
-
-    # Layer a random sfx on top of every cut: delay each sfx input to land
-    # exactly on its cut, then amix everything with the crossfaded track.
+    # Layer this cut's sfx: delay it to land exactly on the cut, then amix
+    # everything with the crossfaded track. normalize=0 keeps the main
+    # audio at full volume instead of amix's default 1/N attenuation;
+    # alimiter catches any peak where a sfx hit lands on an already-loud
+    # moment.
     sfx_labels = []
     for k, offset in enumerate(cut_offsets):
-        src_idx = n + (k % sfx_count)
+        src_idx = n + k
         delay_ms = max(int(offset * 1000), 0)
         lbl = f"sfxd{k}"
         parts.append(
@@ -129,34 +196,33 @@ def _filter_graph(n: int, trims: list[float], has_audio: list[bool], sfx_count: 
         )
         sfx_labels.append(f"[{lbl}]")
 
-    # normalize=0 keeps the main audio at full volume instead of amix's
-    # default 1/N attenuation; alimiter catches any peak where a sfx hit
-    # happens to land on top of an already-loud moment in the clip.
     mix_inputs = f"[{cur_a}]" + "".join(sfx_labels)
     parts.append(
         f"{mix_inputs}amix=inputs={len(sfx_labels) + 1}:duration=first:"
         f"dropout_transition=0:normalize=0,alimiter=limit=0.95[aout]"
     )
 
-    return ";".join(parts), cur_v, "aout"
+    return ";".join(parts), cur_v, "aout", ordered_music_paths
 
 
-def build_compilation(clip_ids: list[int], compilation_id: int | None = None) -> dict:
+def build_compilation(items: list[dict], compilation_id: int | None = None) -> dict:
     """
     Builds the compilation and updates the `compilations` row. If
     compilation_id is None, a new row is created first. Returns the
     updated compilation dict. Raises BuildError on failure (the row is
     still updated with status='failed' + error for the dashboard to show).
     """
-    clips = db.get_clips_by_ids(clip_ids)
-    if not clips:
-        raise BuildError("No clips found for the given ids")
-    for c in clips:
-        if not c.get("file_path") or not Path(c["file_path"]).exists():
-            raise BuildError(f"clip {c['id']} is missing its media file on disk")
+    if not items:
+        raise BuildError("No items in the sequence")
+    for it in items:
+        if not it.get("file_path") or not Path(it["file_path"]).exists():
+            raise BuildError(f"{it.get('ref', 'item')} is missing its media file on disk")
+    if len(items) > SOFT_WARNING_ITEM_COUNT:
+        log.info("Building a %d-item compilation (soft warning threshold is %d) -- may feel rushed",
+                  len(items), SOFT_WARNING_ITEM_COUNT)
 
     if compilation_id is None:
-        compilation_id = db.create_compilation([c["id"] for c in clips])
+        compilation_id = db.create_compilation([it["ref"] for it in items])
 
     with pipeline_lock() as acquired:
         if not acquired:
@@ -165,45 +231,58 @@ def build_compilation(clip_ids: list[int], compilation_id: int | None = None) ->
             raise BuildError("pipeline lock held by another job")
 
         try:
-            durations, has_audio = zip(*(_duration_and_audio(c["file_path"]) for c in clips))
-            trims = _compute_trims(list(durations))
+            with tempfile.TemporaryDirectory(prefix="meme_build_") as tmp:
+                tmp_dir = Path(tmp)
+                resolved_paths = [_materialize_slide(it, tmp_dir) for it in items]
 
-            sfx_files = list_sfx()
-            if not sfx_files:
-                raise BuildError("no sfx files available (compiler.sfx_gen.generate_all failed?)")
-            n = len(clips)
-            sfx_count = min(len(sfx_files), max(n - 1, 1))
-            chosen_sfx = random.sample(sfx_files, sfx_count) if sfx_count <= len(sfx_files) else sfx_files
+                durations, has_audio = zip(*(_duration_and_audio(p) for p in resolved_paths))
+                trims = _compute_trims(list(durations))
+                n = len(items)
 
-            filter_complex, v_label, a_label = _filter_graph(n, trims, list(has_audio), len(chosen_sfx))
+                # One sfx per cut, hinted by the category of the incoming item.
+                chosen_sfx = [sfx_gen.pick_sfx(items[i]["category"]) for i in range(1, n)]
 
-            out_dir = config.MEDIA_ROOT / "compilations"
-            out_dir.mkdir(parents=True, exist_ok=True)
-            out_path = out_dir / f"compilation_{compilation_id}.mp4"
+                # One (looped) background music track per silent segment, if the library has any.
+                music_choice = [
+                    library.pick_library_music() if not has_audio[i] else None
+                    for i in range(n)
+                ]
 
-            cmd = ["ffmpeg", "-y"]
-            for c in clips:
-                cmd += ["-i", c["file_path"]]
-            for sfx in chosen_sfx:
-                cmd += ["-i", str(sfx)]
-            cmd += [
-                "-filter_complex", filter_complex,
-                "-map", f"[{v_label}]", "-map", f"[{a_label}]",
-                "-t", str(config.MAX_COMPILATION_SEC),
-                "-c:v", "libx264", "-preset", config.FFMPEG_PRESET, "-crf", str(config.FFMPEG_CRF),
-                "-c:a", "aac", "-b:a", "192k",
-                "-movflags", "+faststart",
-                str(out_path),
-            ]
-            _run(cmd)
+                filter_complex, v_label, a_label, music_paths = _filter_graph(
+                    n, trims, list(has_audio), chosen_sfx, music_choice
+                )
 
-            final_duration, _ = _duration_and_audio(str(out_path))
+                out_dir = config.MEDIA_ROOT / "compilations"
+                out_dir.mkdir(parents=True, exist_ok=True)
+                out_path = out_dir / f"compilation_{compilation_id}.mp4"
+
+                cmd = ["ffmpeg", "-y"]
+                for p in resolved_paths:
+                    cmd += ["-i", str(p)]
+                for sfx in chosen_sfx:
+                    cmd += ["-i", str(sfx)]
+                for music in music_paths:
+                    cmd += ["-stream_loop", "-1", "-i", str(music)]
+                cmd += [
+                    "-filter_complex", filter_complex,
+                    "-map", f"[{v_label}]", "-map", f"[{a_label}]",
+                    "-t", str(config.MAX_COMPILATION_SEC),
+                    "-c:v", "libx264", "-preset", config.FFMPEG_PRESET, "-crf", str(config.FFMPEG_CRF),
+                    "-c:a", "aac", "-b:a", "192k",
+                    "-movflags", "+faststart",
+                    str(out_path),
+                ]
+                _run(cmd)
+
+                final_duration, _ = _duration_and_audio(out_path)
+
             db.update_compilation(
                 compilation_id, status="ready", output_path=str(out_path),
                 duration_sec=final_duration, error=None,
             )
-            db.set_clips_compilation([c["id"] for c in clips], compilation_id)
-            log.info("Compilation %d ready: %s (%.1fs)", compilation_id, out_path, final_duration)
+            real_ids = [it["id"] for it in items if it.get("id") is not None]
+            db.set_clips_compilation(real_ids, compilation_id)
+            log.info("Compilation %d ready: %s (%.1fs, %d items)", compilation_id, out_path, final_duration, n)
             return db.get_compilation(compilation_id)
         except subprocess.CalledProcessError as exc:
             err = exc.stderr[-2000:] if exc.stderr else str(exc)

@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}Build - {{ date_str }}{% endblock %}
+{% block content %}
+<h1>Build compilation</h1>
+<p class="hint">Add clips, images/GIFs, and reaction clips below, then use ▲▼ to arrange the order. Reaction clips are never inserted automatically -- drop them in wherever you want.</p>
+
+<div class="build-layout">
+  <div class="build-sources">
+    <h2>Kept clips — {{ date_str }}</h2>
+    {% for category, clips in by_category.items() %}
+      <section class="category-block">
+        <h3>{{ category }} <span class="count">({{ clips|length }})</span></h3>
+        {% if clips %}
+        <div class="pick-grid">
+          {% for c in clips %}
+            <div class="pick-card">
+              {% if c.media_type == 'video' %}
+                <video src="{{ c.url }}" preload="metadata" muted></video>
+              {% else %}
+                <img src="{{ c.url }}" alt="{{ c.title or '' }}" loading="lazy">
+              {% endif %}
+              <div class="pick-title">{{ c.title or '(untitled)' }}</div>
+              <button type="button" class="add-btn"
+                      data-ref="clip:{{ c.id }}" data-title="{{ c.title or '' }}"
+                      data-category="{{ c.category }}" data-media-type="{{ c.media_type }}"
+                      data-url="{{ c.url }}">+ Add</button>
+            </div>
+          {% endfor %}
+        </div>
+        {% else %}
+          <p class="empty">Nothing kept in this category yet.</p>
+        {% endif %}
+      </section>
+    {% endfor %}
+
+    <h2>Reaction clips (manual library)</h2>
+    <p class="hint">Drop files into <code>library/reactions/&lt;category&gt;/</code> on the droplet to add more.</p>
+    {% for category, files in reactions_by_category.items() %}
+      <section class="category-block">
+        <h3>{{ category }} <span class="count">({{ files|length }})</span></h3>
+        {% if files %}
+        <div class="pick-grid">
+          {% for filename in files %}
+            {% set is_gif = filename.lower().endswith('.gif') %}
+            {% set file_url = url_for('library_file', subpath=category ~ '/' ~ filename) %}
+            <div class="pick-card">
+              {% if is_gif %}
+                <img src="{{ file_url }}" alt="{{ filename }}" loading="lazy">
+              {% else %}
+                <video src="{{ file_url }}" preload="metadata" muted></video>
+              {% endif %}
+              <div class="pick-title">{{ filename }}</div>
+              <button type="button" class="add-btn"
+                      data-ref="reaction:{{ category }}/{{ filename }}" data-title="{{ filename }}"
+                      data-category="{{ category }}" data-media-type="{{ 'gif' if is_gif else 'video' }}"
+                      data-url="{{ file_url }}">+ Add</button>
+            </div>
+          {% endfor %}
+        </div>
+        {% else %}
+          <p class="empty">No reaction clips in library/reactions/{{ category }}/ yet.</p>
+        {% endif %}
+      </section>
+    {% endfor %}
+  </div>
+
+  <div class="build-sequence">
+    <h2>Sequence</h2>
+    <div id="seq-warning" class="notice" hidden></div>
+    <ol id="sequence-list" class="sequence-list"></ol>
+    <p id="seq-empty" class="empty">Nothing added yet — click "+ Add" on clips to the left.</p>
+
+    <form method="post" action="{{ url_for('build_run') }}" id="build-run-form">
+      <div id="hidden-refs"></div>
+      <button type="submit" id="build-submit-btn">Build compilation</button>
+    </form>
+  </div>
+</div>
+
+<script>
+  const SOFT_WARNING_COUNT = {{ soft_warning_count }};
+  let sequence = {{ initial_items | tojson }};
+
+  const listEl = document.getElementById('sequence-list');
+  const emptyEl = document.getElementById('seq-empty');
+  const warningEl = document.getElementById('seq-warning');
+
+  function render() {
+    listEl.innerHTML = '';
+    sequence.forEach((item, i) => {
+      const li = document.createElement('li');
+      li.className = 'sequence-item';
+
+      const preview = document.createElement(item.media_type === 'video' ? 'video' : 'img');
+      preview.src = item.url;
+      if (item.media_type === 'video') { preview.muted = true; preview.preload = 'metadata'; }
+
+      const meta = document.createElement('div');
+      meta.className = 'sequence-meta';
+      meta.innerHTML = `<strong>${i + 1}.</strong> ${escapeHtml(item.title || '(untitled)')} `
+        + `<span class="clip-sub">(${escapeHtml(item.media_type)} · ${escapeHtml(item.category)})</span>`;
+
+      const controls = document.createElement('div');
+      controls.className = 'sequence-controls';
+      controls.appendChild(makeBtn('▲', () => move(i, -1)));
+      controls.appendChild(makeBtn('▼', () => move(i, 1)));
+      controls.appendChild(makeBtn('✗', () => remove(i)));
+
+      li.appendChild(preview);
+      li.appendChild(meta);
+      li.appendChild(controls);
+      listEl.appendChild(li);
+    });
+
+    emptyEl.hidden = sequence.length > 0;
+    if (sequence.length > SOFT_WARNING_COUNT) {
+      warningEl.hidden = false;
+      warningEl.textContent = `${sequence.length} items selected -- past ${SOFT_WARNING_COUNT} tends to feel rushed inside a ~58s compilation.`;
+    } else {
+      warningEl.hidden = true;
+    }
+  }
+
+  function makeBtn(label, onClick) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  function escapeHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  function move(i, dir) {
+    const j = i + dir;
+    if (j < 0 || j >= sequence.length) return;
+    [sequence[i], sequence[j]] = [sequence[j], sequence[i]];
+    render();
+  }
+
+  function remove(i) {
+    sequence.splice(i, 1);
+    render();
+  }
+
+  function addItem(ref, title, category, mediaType, url) {
+    sequence.push({ref, title, category, media_type: mediaType, url});
+    render();
+  }
+
+  document.querySelectorAll('.add-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      addItem(btn.dataset.ref, btn.dataset.title, btn.dataset.category, btn.dataset.mediaType, btn.dataset.url);
+    });
+  });
+
+  document.getElementById('build-run-form').addEventListener('submit', (e) => {
+    if (sequence.length === 0) {
+      e.preventDefault();
+      alert('Add at least one item to the sequence first.');
+      return;
+    }
+    const container = document.getElementById('hidden-refs');
+    container.innerHTML = '';
+    sequence.forEach((item) => {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = 'ref';
+      input.value = item.ref;
+      container.appendChild(input);
+    });
+  });
+
+  render();
+</script>
+{% endblock %}

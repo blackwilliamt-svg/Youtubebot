@@ -24,7 +24,9 @@ SEARCH_QUERIES = [
     ("funny animal", "animals"),
     ("gaming highlight", "gaming"),
     ("amazing moment", "wins"),
+    ("mildly infuriating", "mildly-infuriating"),
 ]
+QUERY_BY_CATEGORY = {cat: q for q, cat in SEARCH_QUERIES}
 
 # Vimeo's `license` field values that count as Creative Commons.
 CC_LICENSES = {"CC", "CC-BY", "CC-BY-NC", "CC-BY-NC-ND", "CC-BY-NC-SA", "CC-BY-ND", "CC-BY-SA", "CC0"}
@@ -44,12 +46,7 @@ def _get(path, params):
     return resp.json()
 
 
-def gather_candidates() -> list[Candidate]:
-    if not config.VIMEO_ACCESS_TOKEN:
-        log.warning("VIMEO_ACCESS_TOKEN not configured; skipping vimeo source")
-        return []
-
-    query, category = SEARCH_QUERIES[datetime.now(timezone.utc).hour % len(SEARCH_QUERIES)]
+def _search(query: str, category: str) -> list[Candidate]:
     try:
         data = _get(
             "/videos",
@@ -99,3 +96,22 @@ def gather_candidates() -> list[Candidate]:
         )
     log.info("Vimeo: gathered %d candidates for query %r", len(candidates), query)
     return candidates
+
+
+def gather_candidates() -> list[Candidate]:
+    """Hourly job: one hour-rotated search query."""
+    if not config.VIMEO_ACCESS_TOKEN:
+        log.warning("VIMEO_ACCESS_TOKEN not configured; skipping vimeo source")
+        return []
+    query, category = SEARCH_QUERIES[datetime.now(timezone.utc).hour % len(SEARCH_QUERIES)]
+    return _search(query, category)
+
+
+def gather_for_category(category: str) -> list[Candidate]:
+    """Manual test-snapshot: search using that category's query, regardless of the hour."""
+    if not config.VIMEO_ACCESS_TOKEN:
+        return []
+    query = QUERY_BY_CATEGORY.get(category)
+    if not query:
+        return []
+    return _search(query, category)

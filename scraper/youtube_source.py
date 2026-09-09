@@ -36,13 +36,18 @@ TRENDING_CATEGORY_MAP = {
 }
 
 # (search query, category) -- one is used per hourly run, rotated by hour.
+# mildly-infuriating has no good official YouTube category id, so it only
+# gets covered through this search leg, not the mostPopular chart below.
 SEARCH_QUERIES = [
     ("epic fail compilation clip", "fails"),
     ("oddly satisfying clip", "oddly-satisfying"),
     ("amazing animal moment clip", "animals"),
     ("insane gaming clip", "gaming"),
     ("wholesome win moment clip", "wins"),
+    ("mildly infuriating moment clip", "mildly-infuriating"),
 ]
+QUERY_BY_CATEGORY = {cat: q for q, cat in SEARCH_QUERIES}
+TRENDING_ID_BY_CATEGORY = {cat: cat_id for cat_id, cat in TRENDING_CATEGORY_MAP.items()}
 
 
 class _RequestError(Exception):
@@ -98,34 +103,39 @@ def _candidate_from_item(item, category) -> Candidate | None:
     )
 
 
-def _gather_trending() -> list[Candidate]:
+def _gather_trending_for(cat_id: str, category: str) -> list[Candidate]:
+    try:
+        data = _get(
+            "videos",
+            {
+                "part": "snippet,contentDetails,statistics,status",
+                "chart": "mostPopular",
+                "regionCode": "US",
+                "videoCategoryId": cat_id,
+                "maxResults": 15,
+            },
+        )
+    except (_RequestError, requests.RequestException) as exc:
+        log.warning("YouTube trending fetch failed for category %s: %s", cat_id, exc)
+        return []
     candidates = []
-    for cat_id, category in TRENDING_CATEGORY_MAP.items():
-        try:
-            data = _get(
-                "videos",
-                {
-                    "part": "snippet,contentDetails,statistics,status",
-                    "chart": "mostPopular",
-                    "regionCode": "US",
-                    "videoCategoryId": cat_id,
-                    "maxResults": 15,
-                },
-            )
-        except (_RequestError, requests.RequestException) as exc:
-            log.warning("YouTube trending fetch failed for category %s: %s", cat_id, exc)
+    for item in data.get("items", []):
+        if item.get("status", {}).get("license") != "creativeCommon":
             continue
-        for item in data.get("items", []):
-            if item.get("status", {}).get("license") != "creativeCommon":
-                continue
-            cand = _candidate_from_item(item, category)
-            if cand:
-                candidates.append(cand)
+        cand = _candidate_from_item(item, category)
+        if cand:
+            candidates.append(cand)
     return candidates
 
 
-def _gather_search() -> list[Candidate]:
-    query, category = SEARCH_QUERIES[datetime.now(timezone.utc).hour % len(SEARCH_QUERIES)]
+def _gather_trending() -> list[Candidate]:
+    candidates = []
+    for cat_id, category in TRENDING_CATEGORY_MAP.items():
+        candidates += _gather_trending_for(cat_id, category)
+    return candidates
+
+
+def _gather_search_for(query: str, category: str) -> list[Candidate]:
     published_after = (datetime.now(timezone.utc) - timedelta(hours=26)).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
         data = _get(
@@ -162,10 +172,31 @@ def _gather_search() -> list[Candidate]:
     return [c for c in (_candidate_from_item(item, category) for item in details.get("items", [])) if c]
 
 
+def _gather_search() -> list[Candidate]:
+    query, category = SEARCH_QUERIES[datetime.now(timezone.utc).hour % len(SEARCH_QUERIES)]
+    return _gather_search_for(query, category)
+
+
 def gather_candidates() -> list[Candidate]:
+    """Hourly job: trending chart across all mapped categories + one hour-rotated search."""
     if not config.YOUTUBE_API_KEY:
         log.warning("YOUTUBE_API_KEY not configured; skipping youtube source")
         return []
     candidates = _gather_trending() + _gather_search()
     log.info("YouTube: gathered %d candidates", len(candidates))
+    return candidates
+
+
+def gather_for_category(category: str) -> list[Candidate]:
+    """Manual test-snapshot: trending (if this category has a chart id) + search, for one category only."""
+    if not config.YOUTUBE_API_KEY:
+        return []
+    candidates = []
+    cat_id = TRENDING_ID_BY_CATEGORY.get(category)
+    if cat_id:
+        candidates += _gather_trending_for(cat_id, category)
+    query = QUERY_BY_CATEGORY.get(category)
+    if query:
+        candidates += _gather_search_for(query, category)
+    log.info("YouTube: gathered %d candidates for category=%s", len(candidates), category)
     return candidates

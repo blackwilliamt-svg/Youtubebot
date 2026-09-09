@@ -32,6 +32,21 @@ def init_db():
     schema_path = config.BASE_DIR / "db" / "schema.sql"
     with get_conn() as conn:
         conn.executescript(schema_path.read_text())
+    _migrate()
+
+
+def _migrate():
+    """
+    Defensive ALTER TABLEs for columns added after a DB may already have
+    been created (CREATE TABLE IF NOT EXISTS in schema.sql doesn't touch
+    an existing table). Safe to call every startup.
+    """
+    with get_conn() as conn:
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(clips)")}
+        if "media_type" not in existing:
+            conn.execute("ALTER TABLE clips ADD COLUMN media_type TEXT NOT NULL DEFAULT 'video'")
+        if "triaged" not in existing:
+            conn.execute("ALTER TABLE clips ADD COLUMN triaged INTEGER NOT NULL DEFAULT 0")
 
 
 def utcnow_iso():
@@ -56,6 +71,8 @@ def is_duplicate(source: str, source_id: str, window_hours: int = None) -> bool:
 def insert_clip(**fields) -> int:
     fields.setdefault("fetched_at", utcnow_iso())
     fields.setdefault("status", "new")
+    fields.setdefault("media_type", "video")
+    fields.setdefault("triaged", 0)
     cols = ", ".join(fields.keys())
     placeholders = ", ".join("?" for _ in fields)
     with get_conn() as conn:
@@ -66,14 +83,71 @@ def insert_clip(**fields) -> int:
         return cur.lastrowid
 
 
-def get_clips_for_date(date_str: str):
-    """date_str: 'YYYY-MM-DD' (matches the /media/<date>/ folder convention)."""
+def get_clips_for_date(date_str: str, triaged_only: bool = True):
+    """
+    date_str: 'YYYY-MM-DD' (matches the /media/<date>/ folder convention).
+    triaged_only=True (the /review default) only returns items that have
+    been through the /triage accept/reject pass -- untriaged items live in
+    /triage until you act on them.
+    """
+    query = "SELECT * FROM clips WHERE fetched_at LIKE ?"
+    params = [f"{date_str}%"]
+    if triaged_only:
+        query += " AND triaged = 1"
+    query += " ORDER BY fetched_at DESC"
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM clips WHERE fetched_at LIKE ? ORDER BY fetched_at DESC",
-            (f"{date_str}%",),
-        ).fetchall()
+        rows = conn.execute(query, params).fetchall()
     return [dict(r) for r in rows]
+
+
+# --- triage (accept/reject first pass) --------------------------------
+
+def get_next_untriaged_clip(date_str: str | None = None):
+    """Oldest not-yet-triaged item first, optionally restricted to one date."""
+    query = "SELECT * FROM clips WHERE triaged = 0"
+    params: list = []
+    if date_str:
+        query += " AND fetched_at LIKE ?"
+        params.append(f"{date_str}%")
+    query += " ORDER BY fetched_at ASC LIMIT 1"
+    with get_conn() as conn:
+        row = conn.execute(query, params).fetchone()
+    return dict(row) if row else None
+
+
+def count_untriaged(date_str: str | None = None) -> int:
+    query = "SELECT COUNT(*) AS n FROM clips WHERE triaged = 0"
+    params: list = []
+    if date_str:
+        query += " AND fetched_at LIKE ?"
+        params.append(f"{date_str}%")
+    with get_conn() as conn:
+        row = conn.execute(query, params).fetchone()
+    return row["n"]
+
+
+def set_triaged(clip_id: int, triaged: bool = True):
+    with get_conn() as conn:
+        conn.execute("UPDATE clips SET triaged = ? WHERE id = ?", (1 if triaged else 0, clip_id))
+
+
+def get_clip(clip_id: int):
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM clips WHERE id = ?", (clip_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def delete_clip(clip_id: int):
+    """
+    Deletes the DB row only and returns it (so the caller -- app.py's
+    /triage reject route -- can remove the underlying file(s) from disk).
+    """
+    clip = get_clip(clip_id)
+    if clip is None:
+        return None
+    with get_conn() as conn:
+        conn.execute("DELETE FROM clips WHERE id = ?", (clip_id,))
+    return clip
 
 
 def get_available_dates():

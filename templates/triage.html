@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Triage{% endblock %}
+{% block content %}
+<div class="review-header">
+  <h1>Triage</h1>
+  <span class="count">{{ remaining }} remaining{% if date_str %} for {{ date_str }}{% endif %}</span>
+</div>
+
+{% if item %}
+  <div class="triage-card">
+    <div class="triage-preview">
+      {% if item.media_type == 'image' %}
+        <img src="{{ url_for('media', subpath=item.video_rel) if item.video_rel else '' }}" alt="{{ item.title or '' }}">
+      {% elif item.media_type == 'gif' %}
+        <img src="{{ url_for('media', subpath=item.video_rel) if item.video_rel else '' }}" alt="{{ item.title or '' }}">
+      {% else %}
+        <video src="{{ url_for('media', subpath=item.video_rel) if item.video_rel else '' }}" controls preload="auto" autoplay muted></video>
+      {% endif %}
+    </div>
+    <div class="triage-meta">
+      <div class="clip-title">{{ item.title or '(untitled)' }}</div>
+      <div class="clip-sub">
+        {{ item.media_type }} · {{ item.source }}{% if item.subreddit %} · r/{{ item.subreddit }}{% endif %}
+        · {{ item.category }}
+      </div>
+      <a href="{{ item.source_url }}" target="_blank" rel="noopener">source ↗</a>
+    </div>
+
+    <div class="triage-actions">
+      <form method="post" action="{{ url_for('triage_keep', clip_id=item.id) }}" id="keep-form">
+        <input type="hidden" name="date" value="{{ date_str or '' }}">
+        <button type="submit" class="keep-btn">✓ Keep</button>
+      </form>
+      <form method="post" action="{{ url_for('triage_reject', clip_id=item.id) }}" id="reject-form"
+            onsubmit="return confirm('Delete this item permanently?');">
+        <input type="hidden" name="date" value="{{ date_str or '' }}">
+        <button type="submit" class="reject-btn">✗ Delete</button>
+      </form>
+    </div>
+    <p class="hint">Keyboard: Y / → to keep, N / ← to delete</p>
+  </div>
+
+  <script>
+    document.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      if (e.key === 'y' || e.key === 'Y' || e.key === 'ArrowRight') {
+        document.getElementById('keep-form').submit();
+      } else if (e.key === 'n' || e.key === 'N' || e.key === 'ArrowLeft') {
+        if (confirm('Delete this item permanently?')) document.getElementById('reject-form').submit();
+      }
+    });
+  </script>
+{% else %}
+  <p class="empty">🎉 All caught up — nothing left to triage. Head to <a href="{{ url_for('review') }}">Review</a>.</p>
+{% endif %}
+{% endblock %}

@@ -2,8 +2,10 @@
 """
 Entrypoint for the hourly scrape. Invoked by the meme-scrape systemd timer
 (see deploy/meme-scrape.timer) -- gathers candidates from every source,
-picks the single most-trending qualifying one, downloads+compresses it,
-and records it. Falls through to the next-best candidate if the winner
+then pulls TWO items: the single most-trending video, and separately the
+single most-trending image/GIF (ranked on its own scale, never compared
+against video engagement numbers). ~24 video + ~24 image/GIF per day.
+Falls through to the next-best candidate in each bucket if the top pick
 fails to download (dead link, geo-block, etc.) rather than losing the hour.
 
     python -m scraper.run_hourly
@@ -15,7 +17,6 @@ import config
 import db
 from lockutil import pipeline_lock
 from scraper import rank, reddit_source, vimeo_source, youtube_source
-from scraper.downloader import DownloadError, download_and_store
 
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL, logging.INFO),
@@ -37,39 +38,12 @@ def gather_all_candidates():
 def run():
     db.init_db()
     candidates = gather_all_candidates()
-    log.info("Total candidates this hour: %d", len(candidates))
+    video_candidates = [c for c in candidates if c.media_type == "video"]
+    image_candidates = [c for c in candidates if c.media_type in ("image", "gif")]
+    log.info("Total candidates this hour: %d video, %d image/gif", len(video_candidates), len(image_candidates))
 
-    fresh_ranked = [c for c in candidates if not db.is_duplicate(c.source, c.source_id)]
-    for c in fresh_ranked:
-        rank.score_candidate(c)
-    fresh_ranked.sort(key=lambda c: c.trending_score, reverse=True)
-
-    if not fresh_ranked:
-        db.log_scrape_run(len(candidates), None, "no qualifying (non-duplicate) candidate")
-        log.info("No qualifying candidate this hour.")
-        return
-
-    # Try candidates best-first in case the top pick fails to download.
-    for attempt, candidate in enumerate(fresh_ranked[:5], start=1):
-        try:
-            fields = download_and_store(candidate)
-        except DownloadError as exc:
-            log.warning("Attempt %d: %s/%s failed to download (%s); trying next candidate",
-                        attempt, candidate.source, candidate.source_id, exc)
-            continue
-        except Exception:
-            log.exception("Attempt %d: unexpected error downloading %s/%s; trying next candidate",
-                          attempt, candidate.source, candidate.source_id)
-            continue
-
-        clip_id = db.insert_clip(**fields)
-        db.log_scrape_run(len(candidates), clip_id, "")
-        log.info("Stored clip id=%d (%s/%s, category=%s)", clip_id, candidate.source,
-                  candidate.source_id, candidate.category)
-        return
-
-    db.log_scrape_run(len(candidates), None, "top 5 candidates all failed to download")
-    log.error("All top candidates failed to download this hour.")
+    rank.pull_top_candidate(video_candidates, "hourly video")
+    rank.pull_top_candidate(image_candidates, "hourly image/gif")
 
 
 def main():

@@ -12,6 +12,16 @@ pipeline.db-shm
 .locks/
 sfx/*.wav
 
+# manually-dropped library media (personal/licensed assets -- never commit
+# the actual files, just the folder structure + READMEs)
+library/sfx/*
+!library/sfx/README.md
+library/music/*
+!library/music/README.md
+library/reactions/*/*
+!library/reactions/*/.gitkeep
+!library/reactions/README.md
+
 # python
 __pycache__/
 *.pyc

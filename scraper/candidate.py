@@ -9,8 +9,9 @@ class Candidate:
     source: str            # 'reddit' | 'youtube' | 'vimeo'
     source_id: str
     source_url: str
-    media_url: str          # url yt-dlp / the downloader should fetch
+    media_url: str          # url the downloader should fetch (yt-dlp target for video, direct url for image/gif)
     category: str
+    media_type: str = "video"          # 'video' | 'image' | 'gif' -- ranked on separate scales, never merged
     title: str = ""
     author: str = ""
     subreddit: Optional[str] = None

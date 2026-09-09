@@ -11,6 +11,8 @@
   <nav class="topnav">
     <a href="{{ url_for('review') }}" class="brand">meme-pipeline</a>
     <a href="{{ url_for('review') }}">Review</a>
+    <a href="{{ url_for('triage') }}">Triage{% if untriaged_count %} <span class="nav-badge">{{ untriaged_count }}</span>{% endif %}</a>
+    <a href="{{ url_for('build_screen') }}">Build</a>
     <a href="{{ url_for('compilations') }}">Compilations</a>
     <a href="{{ url_for('logout') }}" class="right">Logout</a>
   </nav>

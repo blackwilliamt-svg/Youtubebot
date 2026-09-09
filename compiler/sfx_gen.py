@@ -7,12 +7,19 @@ to source, license, or download. Run once during setup:
 
 build.py calls generate_all() lazily too, so this is self-healing if
 sfx/ ever gets wiped.
+
+This is the *fallback* pool. The primary pool is whatever you drop into
+library/sfx/ (see library.py) -- pick_sfx() below tries that first and
+only reaches for a synthesized effect when the library is empty or has
+nothing matching the requested category.
 """
 import logging
+import random
 import subprocess
 from pathlib import Path
 
 import config
+import library
 
 log = logging.getLogger("meme_pipeline.sfx_gen")
 
@@ -63,9 +70,23 @@ def generate_all(force: bool = False):
         _synthesize(filename, expr, dest)
 
 
-def list_sfx() -> list[Path]:
+def list_synthesized() -> list[Path]:
     generate_all()
     return sorted(config.SFX_DIR.glob("*.wav"))
+
+
+def pick_sfx(category: str | None = None) -> Path:
+    """
+    The one function compiler/build.py calls: library/sfx/ (category-hinted
+    file if one matches, else a generic one) first, synthesized fallback
+    always available as a last resort. Never returns None -- generate_all()
+    guarantees at least the synthesized set exists.
+    """
+    from_library = library.pick_library_sfx(category)
+    if from_library is not None:
+        return from_library
+    synthesized = list_synthesized()
+    return random.choice(synthesized)
 
 
 if __name__ == "__main__":

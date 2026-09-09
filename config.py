@@ -15,13 +15,20 @@ load_dotenv(BASE_DIR / ".env")
 # --- filesystem layout -------------------------------------------------
 MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT", BASE_DIR / "media")).resolve()
 DB_PATH = Path(os.environ.get("DB_PATH", BASE_DIR / "pipeline.db")).resolve()
-SFX_DIR = Path(os.environ.get("SFX_DIR", BASE_DIR / "sfx")).resolve()
+SFX_DIR = Path(os.environ.get("SFX_DIR", BASE_DIR / "sfx")).resolve()  # synthesized fallback sfx
 YT_TOKEN_PATH = Path(
     os.environ.get("YT_TOKEN_PATH", BASE_DIR / "secrets" / "youtube_token.json")
 ).resolve()
 LOCK_DIR = Path(os.environ.get("LOCK_DIR", BASE_DIR / ".locks")).resolve()
 
-for d in (MEDIA_ROOT, SFX_DIR, YT_TOKEN_PATH.parent, LOCK_DIR):
+# --- manually-curated libraries (you drop files in, the app just scans them) ---
+LIBRARY_DIR = Path(os.environ.get("LIBRARY_DIR", BASE_DIR / "library")).resolve()
+SFX_LIBRARY_DIR = LIBRARY_DIR / "sfx"
+REACTIONS_LIBRARY_DIR = LIBRARY_DIR / "reactions"
+MUSIC_LIBRARY_DIR = LIBRARY_DIR / "music"
+
+for d in (MEDIA_ROOT, SFX_DIR, YT_TOKEN_PATH.parent, LOCK_DIR,
+          SFX_LIBRARY_DIR, REACTIONS_LIBRARY_DIR, MUSIC_LIBRARY_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 # --- reddit --------------------------------------------------------------
@@ -62,6 +69,15 @@ OUTPUT_WIDTH = int(os.environ.get("OUTPUT_WIDTH", "720"))
 OUTPUT_HEIGHT = int(os.environ.get("OUTPUT_HEIGHT", "1280"))
 MAX_COMPILATION_SEC = int(os.environ.get("MAX_COMPILATION_SEC", "58"))
 TRANSITION_SEC = float(os.environ.get("TRANSITION_SEC", "0.4"))
+SLIDE_DURATION_SEC = float(os.environ.get("SLIDE_DURATION_SEC", "2.5"))  # image/gif -> video slide length
+MUSIC_DUCK_VOLUME = float(os.environ.get("MUSIC_DUCK_VOLUME", "0.25"))  # background music level under sfx/native audio
+
+# --- image/gif scraping ---------------------------------------------------
+MAX_IMAGE_DOWNLOAD_BYTES = int(os.environ.get("MAX_IMAGE_DOWNLOAD_BYTES", str(20 * 1024 * 1024)))
+MAX_GIF_DOWNLOAD_BYTES = int(os.environ.get("MAX_GIF_DOWNLOAD_BYTES", str(40 * 1024 * 1024)))
+
+# --- manual test snapshot --------------------------------------------------
+SNAPSHOT_CATEGORY_DELAY_SEC = float(os.environ.get("SNAPSHOT_CATEGORY_DELAY_SEC", "5"))
 
 # --- misc --------------------------------------------------------------
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")

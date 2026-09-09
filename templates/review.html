@@ -3,18 +3,23 @@
 {% block content %}
 <div class="review-header">
   <h1>Review clips</h1>
-  <form method="get" class="date-picker">
-    <label>Date
-      <select name="date" onchange="this.form.submit()">
-        {% for d in available_dates %}
-          <option value="{{ d }}" {% if d == date_str %}selected{% endif %}>{{ d }}</option>
-        {% endfor %}
-      </select>
-    </label>
-  </form>
+  <div class="header-actions">
+    <button type="button" id="snapshot-btn">Run Test Snapshot</button>
+    <span id="snapshot-status" class="snapshot-status"></span>
+    <form method="get" class="date-picker">
+      <label>Date
+        <select name="date" onchange="this.form.submit()">
+          {% for d in available_dates %}
+            <option value="{{ d }}" {% if d == date_str %}selected{% endif %}>{{ d }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </form>
+  </div>
 </div>
 
-<form method="post" action="{{ url_for('build') }}" id="build-form">
+<form method="get" action="{{ url_for('build_screen') }}" id="build-form">
+  <input type="hidden" name="date" value="{{ date_str }}">
   {% for category, clips in by_category.items() %}
     <section class="category-block">
       <h2>{{ category }} <span class="count">({{ clips|length }})</span></h2>
@@ -23,14 +28,20 @@
         {% for c in clips %}
           <label class="clip-card">
             <input type="checkbox" name="clip_id" value="{{ c.id }}">
-            <video src="{{ url_for('media', subpath=c.video_rel) if c.video_rel else '' }}"
-                   poster="{{ url_for('media', subpath=c.thumb_rel) if c.thumb_rel else '' }}"
-                   controls preload="none" muted></video>
+            <span class="media-type-badge">{{ c.media_type }}</span>
+            {% if c.media_type == 'video' %}
+              <video src="{{ url_for('media', subpath=c.video_rel) if c.video_rel else '' }}"
+                     poster="{{ url_for('media', subpath=c.thumb_rel) if c.thumb_rel else '' }}"
+                     controls preload="none" muted></video>
+            {% else %}
+              <img src="{{ url_for('media', subpath=c.video_rel) if c.video_rel else '' }}"
+                   alt="{{ c.title or '' }}" loading="lazy">
+            {% endif %}
             <div class="clip-meta">
               <div class="clip-title">{{ c.title or '(untitled)' }}</div>
               <div class="clip-sub">
                 {{ c.source }}{% if c.subreddit %} · r/{{ c.subreddit }}{% endif %}
-                · {{ '%.0f'|format(c.duration_sec or 0) }}s
+                {% if c.media_type == 'video' %} · {{ '%.0f'|format(c.duration_sec or 0) }}s{% endif %}
               </div>
               <a href="{{ c.source_url }}" target="_blank" rel="noopener">source ↗</a>
             </div>
@@ -38,14 +49,14 @@
         {% endfor %}
       </div>
       {% else %}
-        <p class="empty">Nothing pulled in this category yet.</p>
+        <p class="empty">Nothing kept in this category yet (check <a href="{{ url_for('triage') }}">Triage</a>).</p>
       {% endif %}
     </section>
   {% endfor %}
 
   <div class="build-bar">
     <span id="selected-count">0 selected</span>
-    <button type="submit">Build compilation</button>
+    <button type="submit">Continue to build →</button>
   </div>
 </form>
 
@@ -57,5 +68,52 @@
   }
   form.addEventListener('change', updateCount);
   updateCount();
+
+  const snapBtn = document.getElementById('snapshot-btn');
+  const snapStatus = document.getElementById('snapshot-status');
+
+  async function pollSnapshot(jobId) {
+    let job;
+    try {
+      job = await (await fetch(`/api/jobs/${jobId}`)).json();
+    } catch (e) {
+      snapStatus.textContent = 'Lost track of the job (network error).';
+      snapBtn.disabled = false;
+      snapBtn.textContent = 'Run Test Snapshot';
+      return;
+    }
+    if (job.status === 'pending' || job.status === 'running') {
+      snapStatus.textContent = job.message || 'Running...';
+      setTimeout(() => pollSnapshot(jobId), 2000);
+    } else {
+      snapBtn.disabled = false;
+      snapBtn.textContent = 'Run Test Snapshot';
+      snapStatus.textContent = job.message || job.status;
+      if (job.status === 'done') {
+        snapStatus.textContent += ' — refresh to see new items.';
+      }
+    }
+  }
+
+  snapBtn.addEventListener('click', async () => {
+    snapBtn.disabled = true;
+    snapBtn.textContent = 'Running...';
+    snapStatus.textContent = 'Starting…';
+    try {
+      const res = await fetch("{{ url_for('snapshot_run') }}", {method: 'POST'});
+      const data = await res.json();
+      if (data.error) {
+        snapStatus.textContent = data.error;
+        snapBtn.disabled = false;
+        snapBtn.textContent = 'Run Test Snapshot';
+        return;
+      }
+      pollSnapshot(data.job_id);
+    } catch (e) {
+      snapStatus.textContent = 'Failed to start.';
+      snapBtn.disabled = false;
+      snapBtn.textContent = 'Run Test Snapshot';
+    }
+  });
 </script>
 {% endblock %}
