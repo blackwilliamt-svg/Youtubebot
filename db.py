@@ -265,6 +265,28 @@ def get_job(job_id):
     return dict(row) if row else None
 
 
+# --- settings (dashboard-editable API credentials, see api_settings.py) ---
+
+def get_all_settings() -> dict:
+    with get_conn() as conn:
+        rows = conn.execute("SELECT key, value FROM settings").fetchall()
+    return {r["key"]: r["value"] for r in rows}
+
+
+def set_setting(key: str, value: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            (key, value, utcnow_iso()),
+        )
+
+
+def delete_setting(key: str) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM settings WHERE key = ?", (key,))
+
+
 # --- subreddits (the live, dashboard-editable scrape source list) ------
 
 def has_any_subreddits() -> bool:

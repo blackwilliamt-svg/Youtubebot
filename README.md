@@ -253,7 +253,10 @@ up.
   generate an access token with the default "public" scope.
 
 Put them all in `.env` (never in code, never committed -- `.env` is in
-`.gitignore` and `deploy/setup_droplet.sh` `chmod 600`s it).
+`.gitignore` and `deploy/setup_droplet.sh` `chmod 600`s it), or set/update
+them live from the dashboard's **Settings** page (`/settings`) once it's
+running -- those overrides take effect immediately, no restart needed, and
+are stored in the local SQLite DB rather than `.env`.
 
 ## Droplet deployment
 

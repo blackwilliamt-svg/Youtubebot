@@ -197,6 +197,21 @@ button:hover { filter: brightness(1.1); }
   border-radius: 999px;
 }
 
+/* --- settings --- */
+.settings-field-list { display: flex; flex-direction: column; gap: 1rem; }
+.settings-field {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+.settings-field-head { display: flex; align-items: center; gap: 0.6rem; }
+.settings-field-head label { font-size: 0.95rem; color: var(--text); }
+.settings-field-help { margin: 0.15rem 0 0.5rem; }
+.settings-field-row { display: flex; gap: 0.5rem; align-items: center; }
+.settings-save-form { display: flex; gap: 0.5rem; flex: 1; }
+.settings-save-form input { flex: 1; }
+
 /* --- triage --- */
 .triage-card {
   max-width: 420px;

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+<p class="hint">
+  API credentials for the services this app talks to. Saving a field here overrides `.env`
+  immediately -- no restart needed. Secret values are never shown back once saved; the field
+  just tells you whether one is set. "Reset" drops the override and falls back to whatever `.env`
+  has (or blank, if `.env` doesn't set it either).
+</p>
+
+{% for group, fields in groups.items() %}
+  <section class="category-block">
+    <h2>{{ group }}</h2>
+    <div class="settings-field-list">
+      {% for f in fields %}
+        <div class="settings-field">
+          <div class="settings-field-head">
+            <label for="{{ f.key }}">{{ f.label }}</label>
+            <span class="status {{ 'status-done' if f.is_set else 'status-pending' }}">
+              {{ 'set' if f.is_set else 'not set' }}
+            </span>
+          </div>
+          {% if f.help %}<p class="hint settings-field-help">{{ f.help }}</p>{% endif %}
+          <div class="settings-field-row">
+            <form method="post" action="{{ url_for('settings_save') }}" class="settings-save-form">
+              <input type="hidden" name="key" value="{{ f.key }}">
+              <input
+                type="{{ 'password' if f.secret else 'text' }}"
+                id="{{ f.key }}"
+                name="value"
+                value="{{ f.display_value }}"
+                placeholder="{{ 'Set -- leave blank to keep it' if (f.secret and f.is_set) else ('' if f.is_set else 'Not set') }}"
+                autocomplete="off">
+              <button type="submit">Save</button>
+            </form>
+            {% if f.is_set %}
+              <form method="post" action="{{ url_for('settings_reset', key=f.key) }}"
+                    onsubmit="return confirm('Reset {{ f.group }} {{ f.label }} to its .env default?');">
+                <button type="submit" class="btn-remove">Reset</button>
+              </form>
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </section>
+{% endfor %}
+{% endblock %}

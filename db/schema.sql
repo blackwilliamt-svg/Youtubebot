@@ -74,6 +74,15 @@ CREATE TABLE IF NOT EXISTS jobs (
     updated_at      TEXT    NOT NULL
 );
 
+-- Dashboard-editable API credentials/config (the /settings page). Overrides
+-- the matching config.py attribute (which otherwise comes from .env) at
+-- runtime -- see api_settings.py. Absent key = fall back to the .env value.
+CREATE TABLE IF NOT EXISTS settings (
+    key             TEXT PRIMARY KEY,
+    value           TEXT    NOT NULL,
+    updated_at      TEXT    NOT NULL
+);
+
 -- The live, editable subreddit source list (dashboard's /subreddits page).
 -- Seeded once from scraper/subreddits.py's DEFAULT_SUBREDDIT_CATEGORY the
 -- first time this table is empty; after that this table is the source of

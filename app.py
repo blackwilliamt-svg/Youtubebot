@@ -21,6 +21,7 @@ from flask import (Flask, abort, flash, jsonify, redirect, render_template,
                     request, send_from_directory, session, url_for)
 from werkzeug.security import check_password_hash
 
+import api_settings
 import config
 import db
 import library
@@ -46,6 +47,7 @@ if not config.DASHBOARD_PASSWORD_HASH:
     log.warning("DASHBOARD_PASSWORD_HASH not set in .env -- no password will ever match; run gen_password_hash.py.")
 
 db.init_db()
+api_settings.apply_overrides()
 library.ensure_dirs()
 
 
@@ -359,6 +361,41 @@ def subreddits_remove(name):
     subreddits_module.remove_subreddit(name)
     flash(f"Removed r/{name}. Already-pulled clips from it are untouched.", "success")
     return redirect(url_for("subreddits"))
+
+
+# --- settings (dashboard-editable API credentials) ------------------------
+
+@app.route("/settings")
+@login_required
+def settings_page():
+    return render_template("settings.html", groups=api_settings.grouped_fields())
+
+
+@app.route("/settings/save", methods=["POST"])
+@login_required
+def settings_save():
+    key = request.form.get("key", "")
+    value = request.form.get("value", "").strip()
+    field = next((f for f in api_settings.API_FIELDS if f["key"] == key), None)
+    if not field:
+        abort(404)
+    if not value:
+        flash("Enter a value first.", "error")
+        return redirect(url_for("settings_page"))
+    api_settings.save(key, value)
+    flash(f"Saved {field['group']} {field['label']}.", "success")
+    return redirect(url_for("settings_page"))
+
+
+@app.route("/settings/<key>/reset", methods=["POST"])
+@login_required
+def settings_reset(key):
+    field = next((f for f in api_settings.API_FIELDS if f["key"] == key), None)
+    if not field:
+        abort(404)
+    api_settings.reset(key)
+    flash(f"Reset {field['group']} {field['label']} to its .env default.", "success")
+    return redirect(url_for("settings_page"))
 
 
 # --- compilations / upload -------------------------------------------------
