@@ -27,6 +27,7 @@ import library
 from compiler.build import BuildError, build_compilation
 from manual_import import ManualImportError, import_url
 from scraper.snapshot import run_test_snapshot
+from scraper import subreddits as subreddits_module
 from scraper.subreddits import CATEGORIES
 from youtube_upload import oauth as yt_oauth
 from youtube_upload.upload import UploadError, upload_video
@@ -326,6 +327,38 @@ def import_url_run():
 
     threading.Thread(target=_worker, daemon=True).start()
     return redirect(url_for("job_status_page", job_id=job_id))
+
+
+# --- subreddit source list (add/remove what the hourly scraper pulls) ------
+
+@app.route("/subreddits")
+@login_required
+def subreddits():
+    by_category = {cat: [] for cat in CATEGORIES}
+    for s in subreddits_module.all_subreddits_with_categories():
+        by_category.setdefault(s["category"], []).append(s)
+    return render_template("subreddits.html", by_category=by_category)
+
+
+@app.route("/subreddits/add", methods=["POST"])
+@login_required
+def subreddits_add():
+    name = request.form.get("name", "")
+    category = request.form.get("category", "")
+    try:
+        stored_name = subreddits_module.add_subreddit(name, category)
+        flash(f"Added r/{stored_name} to {category}.", "success")
+    except ValueError as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("subreddits"))
+
+
+@app.route("/subreddits/<path:name>/remove", methods=["POST"])
+@login_required
+def subreddits_remove(name):
+    subreddits_module.remove_subreddit(name)
+    flash(f"Removed r/{name}. Already-pulled clips from it are untouched.", "success")
+    return redirect(url_for("subreddits"))
 
 
 # --- compilations / upload -------------------------------------------------

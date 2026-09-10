@@ -263,3 +263,73 @@ def get_job(job_id):
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
     return dict(row) if row else None
+
+
+# --- subreddits (the live, dashboard-editable scrape source list) ------
+
+def has_any_subreddits() -> bool:
+    with get_conn() as conn:
+        row = conn.execute("SELECT 1 FROM subreddits LIMIT 1").fetchone()
+    return row is not None
+
+
+def bulk_seed_subreddits(mapping: dict) -> None:
+    """INSERT OR IGNORE every (name, category) pair -- used once, when the
+    table is empty, to seed it from scraper.subreddits' default list."""
+    now = utcnow_iso()
+    with get_conn() as conn:
+        conn.executemany(
+            "INSERT OR IGNORE INTO subreddits (name, category, added_at) VALUES (?, ?, ?)",
+            [(name, category, now) for name, category in mapping.items()],
+        )
+
+
+def list_subreddit_names(category: str | None = None) -> list[str]:
+    query = "SELECT name FROM subreddits"
+    params: tuple = ()
+    if category:
+        query += " WHERE category = ?"
+        params = (category,)
+    query += " ORDER BY name"
+    with get_conn() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [r["name"] for r in rows]
+
+
+def list_subreddits_full() -> list[dict]:
+    """[{name, category, added_at}, ...], for the /subreddits dashboard page."""
+    with get_conn() as conn:
+        rows = conn.execute("SELECT * FROM subreddits ORDER BY category, name COLLATE NOCASE").fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_subreddit_category(name: str) -> str | None:
+    with get_conn() as conn:
+        row = conn.execute("SELECT category FROM subreddits WHERE name = ?", (name,)).fetchone()
+    return row["category"] if row else None
+
+
+def find_subreddit_case_insensitive(name: str) -> str | None:
+    """Returns the stored name (preserving its original casing) if `name`
+    already exists under any casing, else None -- so adding "Aww" when
+    "aww" is already tracked re-categorizes the existing row instead of
+    creating a case-variant duplicate PRAW would treat as the same sub."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT name FROM subreddits WHERE name = ? COLLATE NOCASE", (name,)
+        ).fetchone()
+    return row["name"] if row else None
+
+
+def upsert_subreddit(name: str, category: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO subreddits (name, category, added_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(name) DO UPDATE SET category = excluded.category",
+            (name, category, utcnow_iso()),
+        )
+
+
+def delete_subreddit(name: str) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM subreddits WHERE name = ?", (name,))

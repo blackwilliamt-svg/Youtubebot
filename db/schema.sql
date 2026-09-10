@@ -66,10 +66,20 @@ CREATE TABLE IF NOT EXISTS compilations (
 -- progress without holding an HTTP request open.
 CREATE TABLE IF NOT EXISTS jobs (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    kind            TEXT    NOT NULL,                 -- 'build' | 'upload'
+    kind            TEXT    NOT NULL,                 -- 'build' | 'upload' | 'snapshot' | 'import'
     ref_id          INTEGER,                           -- compilation id, once known
     status          TEXT    NOT NULL DEFAULT 'pending', -- pending | running | done | error
     message         TEXT,
     created_at      TEXT    NOT NULL,
     updated_at      TEXT    NOT NULL
+);
+
+-- The live, editable subreddit source list (dashboard's /subreddits page).
+-- Seeded once from scraper/subreddits.py's DEFAULT_SUBREDDIT_CATEGORY the
+-- first time this table is empty; after that this table is the source of
+-- truth the hourly scraper actually reads, not the hardcoded dict.
+CREATE TABLE IF NOT EXISTS subreddits (
+    name            TEXT PRIMARY KEY,                 -- as typed, e.g. "PublicFreakout" (no "r/" prefix)
+    category        TEXT    NOT NULL,                 -- one of scraper.subreddits.CATEGORIES
+    added_at        TEXT    NOT NULL
 );

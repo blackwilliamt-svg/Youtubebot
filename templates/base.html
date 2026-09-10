@@ -14,6 +14,7 @@
     <a href="{{ url_for('triage') }}">Triage{% if untriaged_count %} <span class="nav-badge">{{ untriaged_count }}</span>{% endif %}</a>
     <a href="{{ url_for('build_screen') }}">Build</a>
     <a href="{{ url_for('compilations') }}">Compilations</a>
+    <a href="{{ url_for('subreddits') }}">Subreddits</a>
     <a href="{{ url_for('logout') }}" class="right">Logout</a>
   </nav>
   {% endif %}

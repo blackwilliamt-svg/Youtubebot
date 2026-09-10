@@ -164,6 +164,30 @@ button:hover { filter: brightness(1.1); }
 .import-url-form input[type=url] { flex: 1; min-width: 200px; }
 .import-url-form select { width: auto; min-width: 140px; }
 
+.add-subreddit-form {
+  display: flex; gap: 0.6rem; align-items: center;
+  margin: 1rem 0 1.5rem;
+  padding: 0.75rem 1rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.add-subreddit-form input[type=text] { flex: 1; min-width: 180px; }
+.add-subreddit-form select { width: auto; min-width: 140px; }
+
+.subreddit-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.subreddit-row {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+}
+.subreddit-row a { color: var(--text); text-decoration: none; font-family: monospace; }
+.subreddit-row a:hover { color: var(--accent); }
+.btn-remove { background: transparent; border: 1px solid var(--error); color: var(--error); padding: 0.3rem 0.7rem; font-size: 0.8rem; }
+.btn-remove:hover { background: var(--error); color: #200606; }
+
 .nav-badge {
   background: var(--accent);
   color: #0b0d10;

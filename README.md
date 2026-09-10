@@ -47,6 +47,9 @@ app.py (Flask, gunicorn)      dashboard, bound to 127.0.0.1:8080 only
   │                            library/reactions/ clips, reorder with
   │                            ▲▼, submit -> background compiler/build.py
   ├─ /compilations             preview finished MP4s, upload to YouTube
+  ├─ /subreddits                add/remove what the hourly scraper pulls
+  │                            from -- writes through to the `subreddits`
+  │                            DB table, not the hardcoded seed dict
   └─ /youtube/authorize        OAuth flow for youtube_upload/upload.py
 
 library.py + library/         manually-curated assets you drop in yourself
@@ -75,7 +78,8 @@ ffmpeg at the same time -- important headroom on a 2GB box with only a
 
 ## Curated sources
 
-29 subreddits mapped to 6 output categories (`scraper/subreddits.py`):
+28 subreddits, seeded into the DB on first run, mapped to 6 fixed output
+categories:
 
 | category | subreddits |
 |---|---|
@@ -86,8 +90,19 @@ ffmpeg at the same time -- important headroom on a 2GB box with only a
 | oddly-satisfying | oddlysatisfying, perfectlycutscreams, BeAmazed, Damnthatsinteresting |
 | mildly-infuriating | mildlyinfuriating |
 
-Edit that dict to add/remove subreddits or recategorize -- no other code
-needs to change.
+**The `/subreddits` dashboard page is the actual way to add or remove
+subreddits** -- a name + category form, and a Remove button per row.
+Under the hood, the `subreddits` DB table (not the hardcoded dict) is
+what every scrape run and Run Test Snapshot actually reads;
+`scraper/subreddits.py`'s `DEFAULT_SUBREDDIT_CATEGORY` dict above is only
+the one-time seed used the first time that table is empty. Adding one
+doesn't verify it exists on Reddit -- a typo just yields nothing from
+that source, same as any other empty listing; removing one only stops
+future pulls, past clips from it are untouched. The six categories
+themselves are **not** editable this way (deliberately) -- they're wired
+into the reaction-library folder structure, the YouTube/Vimeo query
+rotation, and the dashboard's grouping, so a new one would need matching
+changes in several other places to actually work end to end.
 
 Each subreddit's hot+rising listings are classified per-post into
 **video**, **image**, or **gif** (reddit galleries are skipped -- not

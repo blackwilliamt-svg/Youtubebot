@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Subreddits{% endblock %}
+{% block content %}
+<h1>Subreddit sources</h1>
+<p class="hint">
+  The list the hourly scraper (and Run Test Snapshot) pulls from. Adding one here doesn't verify
+  it exists on Reddit -- a typo just yields nothing from that source at scrape time, nothing breaks.
+  Removing one only stops future pulls; clips already collected from it are untouched.
+</p>
+
+<form method="post" action="{{ url_for('subreddits_add') }}" class="add-subreddit-form">
+  <input type="text" name="name" placeholder="subreddit name (no r/ needed)" required>
+  <select name="category" required>
+    <option value="" disabled selected>Category…</option>
+    {% for cat in by_category.keys() %}
+      <option value="{{ cat }}">{{ cat }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Add</button>
+</form>
+
+{% for category, subs in by_category.items() %}
+  <section class="category-block">
+    <h2>{{ category }} <span class="count">({{ subs|length }})</span></h2>
+    {% if subs %}
+      <div class="subreddit-list">
+        {% for s in subs %}
+          <div class="subreddit-row">
+            <a href="https://www.reddit.com/r/{{ s.name }}" target="_blank" rel="noopener">r/{{ s.name }}</a>
+            <form method="post" action="{{ url_for('subreddits_remove', name=s.name) }}"
+                  onsubmit="return confirm('Remove r/{{ s.name }}? Future scrapes will stop pulling from it.');">
+              <button type="submit" class="btn-remove">Remove</button>
+            </form>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="empty">No subreddits in this category.</p>
+    {% endif %}
+  </section>
+{% endfor %}
+{% endblock %}

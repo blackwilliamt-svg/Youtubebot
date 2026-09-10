@@ -20,7 +20,7 @@ import prawcore
 import config
 from scraper.candidate import Candidate
 from scraper.retry import with_backoff
-from scraper.subreddits import ALL_SUBREDDITS, category_for_subreddit, subreddits_for_category
+from scraper.subreddits import category_for_subreddit, list_all_subreddits, subreddits_for_category
 
 log = logging.getLogger("meme_pipeline.reddit")
 
@@ -137,8 +137,9 @@ def gather_candidates() -> list[Candidate]:
     reddit = _get_client()
     if reddit is None:
         return []
-    candidates = _gather_from_subreddits(reddit, ALL_SUBREDDITS)
-    log.info("Reddit: gathered %d candidates across %d subreddits", len(candidates), len(ALL_SUBREDDITS))
+    all_subreddits = list_all_subreddits()
+    candidates = _gather_from_subreddits(reddit, all_subreddits)
+    log.info("Reddit: gathered %d candidates across %d subreddits", len(candidates), len(all_subreddits))
     return candidates
 
 
