@@ -6,7 +6,8 @@
   API credentials for the services this app talks to. Saving a field here overrides `.env`
   immediately -- no restart needed. Secret values are never shown back once saved; the field
   just tells you whether one is set. "Reset" drops the override and falls back to whatever `.env`
-  has (or blank, if `.env` doesn't set it either).
+  has (or blank, if `.env` doesn't set it either). To change your dashboard login username or
+  password instead, see <a href="{{ url_for('account_page') }}">Account</a>.
 </p>
 
 {% for group, fields in groups.items() %}

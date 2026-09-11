@@ -19,8 +19,9 @@ from pathlib import Path
 
 from flask import (Flask, abort, flash, jsonify, redirect, render_template,
                     request, send_from_directory, session, url_for)
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
+import account_settings
 import api_settings
 import config
 import db
@@ -29,6 +30,7 @@ from compiler.build import BuildError, build_compilation
 from manual_import import ManualImportError, import_url
 from scraper.snapshot import run_test_snapshot
 from scraper import subreddits as subreddits_module
+from scraper import youtube_hashtags as hashtags_module
 from scraper.subreddits import CATEGORIES
 from youtube_upload import oauth as yt_oauth
 from youtube_upload.upload import UploadError, upload_video
@@ -48,6 +50,7 @@ if not config.DASHBOARD_PASSWORD_HASH:
 
 db.init_db()
 api_settings.apply_overrides()
+account_settings.apply_overrides()
 library.ensure_dirs()
 
 
@@ -148,7 +151,10 @@ def triage():
 @app.route("/triage/<int:clip_id>/keep", methods=["POST"])
 @login_required
 def triage_keep(clip_id):
+    clip = db.get_clip(clip_id)
     db.set_triaged(clip_id, True)
+    if clip:
+        db.record_triage_keep(clip["source"], clip.get("subreddit"))
     return redirect(url_for("triage", date=request.form.get("date") or None))
 
 
@@ -157,6 +163,7 @@ def triage_keep(clip_id):
 def triage_reject(clip_id):
     clip = db.delete_clip(clip_id)
     if clip:
+        db.record_triage_reject(clip["source"], clip.get("subreddit"))
         for key in ("file_path", "thumb_path"):
             p = clip.get(key)
             if p:
@@ -361,6 +368,110 @@ def subreddits_remove(name):
     subreddits_module.remove_subreddit(name)
     flash(f"Removed r/{name}. Already-pulled clips from it are untouched.", "success")
     return redirect(url_for("subreddits"))
+
+
+@app.route("/youtube-hashtags")
+@login_required
+def youtube_hashtags():
+    by_category = {cat: [] for cat in CATEGORIES}
+    for h in hashtags_module.all_hashtags_with_categories():
+        by_category.setdefault(h["category"], []).append(h)
+    return render_template("youtube_hashtags.html", by_category=by_category)
+
+
+@app.route("/youtube-hashtags/add", methods=["POST"])
+@login_required
+def youtube_hashtags_add():
+    tag = request.form.get("hashtag", "")
+    category = request.form.get("category", "")
+    try:
+        stored_tag = hashtags_module.add_hashtag(tag, category)
+        flash(f"Added {stored_tag} to {category}.", "success")
+    except ValueError as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("youtube_hashtags"))
+
+
+@app.route("/youtube-hashtags/<path:tag>/remove", methods=["POST"])
+@login_required
+def youtube_hashtags_remove(tag):
+    hashtags_module.remove_hashtag(tag)
+    flash(f"Removed {tag}. Already-pulled clips from it are untouched.", "success")
+    return redirect(url_for("youtube_hashtags"))
+
+
+# --- triage approval stats (read-only, per source) -------------------------
+
+@app.route("/stats")
+@login_required
+def stats_page():
+    all_stats = db.get_triage_stats()
+    reddit_stats = [s for s in all_stats if s["source"] == "reddit"]
+    youtube_stats = next((s for s in all_stats if s["source"] == "youtube"), None)
+    vimeo_stats = next((s for s in all_stats if s["source"] == "vimeo"), None)
+    return render_template(
+        "stats.html",
+        reddit_stats=reddit_stats,
+        youtube_stats=youtube_stats,
+        vimeo_stats=vimeo_stats,
+    )
+
+
+# --- account (dashboard login credentials -- separate from /settings'
+# third-party API creds; see account_settings.py) --------------------------
+
+_MIN_PASSWORD_LENGTH = 8
+
+
+@app.route("/account")
+@login_required
+def account_page():
+    return render_template("account.html", current_username=config.DASHBOARD_USERNAME)
+
+
+@app.route("/account/update", methods=["POST"])
+@login_required
+def account_update():
+    current_password = request.form.get("current_password", "")
+    new_username_raw = request.form.get("new_username", "")
+    new_username = new_username_raw.strip()
+    new_password = request.form.get("new_password", "")
+    confirm_password = request.form.get("confirm_password", "")
+
+    try:
+        current_ok = bool(config.DASHBOARD_PASSWORD_HASH) and check_password_hash(
+            config.DASHBOARD_PASSWORD_HASH, current_password
+        )
+    except ValueError:
+        current_ok = False  # malformed/empty stored hash -- never treat as a match
+    if not current_ok:
+        flash("Current password is incorrect.", "error")
+        return redirect(url_for("account_page"))
+
+    if new_username_raw and not new_username:
+        flash("Username can't be blank.", "error")
+        return redirect(url_for("account_page"))
+
+    if new_password or confirm_password:
+        if new_password != confirm_password:
+            flash("New password and confirmation don't match.", "error")
+            return redirect(url_for("account_page"))
+        if len(new_password) < _MIN_PASSWORD_LENGTH:
+            flash(f"New password must be at least {_MIN_PASSWORD_LENGTH} characters.", "error")
+            return redirect(url_for("account_page"))
+
+    if not new_username and not new_password:
+        flash("Nothing to change -- set a new username and/or a new password first.", "error")
+        return redirect(url_for("account_page"))
+
+    if new_username:
+        account_settings.save("DASHBOARD_USERNAME", new_username)
+    if new_password:
+        account_settings.save("DASHBOARD_PASSWORD_HASH", generate_password_hash(new_password))
+
+    session.clear()
+    flash("Account updated -- log in again with your new credentials.", "success")
+    return redirect(url_for("login"))
 
 
 # --- settings (dashboard-editable API credentials) ------------------------

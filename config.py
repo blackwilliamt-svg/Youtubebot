@@ -31,25 +31,22 @@ for d in (MEDIA_ROOT, SFX_DIR, YT_TOKEN_PATH.parent, LOCK_DIR,
           SFX_LIBRARY_DIR, REACTIONS_LIBRARY_DIR, MUSIC_LIBRARY_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
-# --- reddit --------------------------------------------------------------
-REDDIT_CLIENT_ID = os.environ.get("REDDIT_CLIENT_ID", "")
-REDDIT_CLIENT_SECRET = os.environ.get("REDDIT_CLIENT_SECRET", "")
-REDDIT_USER_AGENT = os.environ.get(
-    "REDDIT_USER_AGENT", "meme-pipeline/1.0 (by u/change_me)"
-)
+# --- bright data (scraper apis for reddit / youtube / vimeo) --------------
+# One account, one bearer token -- each source is just a different dataset
+# id on the same token. See README.md for where to get each dataset id.
+BRIGHTDATA_API_KEY = os.environ.get("BRIGHTDATA_API_KEY", "")
+BRIGHTDATA_REDDIT_DATASET_ID = os.environ.get("BRIGHTDATA_REDDIT_DATASET_ID", "")
+BRIGHTDATA_YOUTUBE_DATASET_ID = os.environ.get("BRIGHTDATA_YOUTUBE_DATASET_ID", "")
+BRIGHTDATA_VIMEO_DATASET_ID = os.environ.get("BRIGHTDATA_VIMEO_DATASET_ID", "")
+BRIGHTDATA_POLL_INTERVAL_SEC = float(os.environ.get("BRIGHTDATA_POLL_INTERVAL_SEC", "5"))
+BRIGHTDATA_POLL_TIMEOUT_SEC = float(os.environ.get("BRIGHTDATA_POLL_TIMEOUT_SEC", "300"))
 
-# --- youtube data api (search/trending) -----------------------------------
-YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
-
-# --- youtube oauth (upload) ------------------------------------------------
+# --- youtube oauth (upload -- unaffected by the Bright Data migration) -----
 YT_OAUTH_CLIENT_ID = os.environ.get("YT_OAUTH_CLIENT_ID", "")
 YT_OAUTH_CLIENT_SECRET = os.environ.get("YT_OAUTH_CLIENT_SECRET", "")
 YT_OAUTH_REDIRECT_URI = os.environ.get(
     "YT_OAUTH_REDIRECT_URI", "http://localhost:8080/youtube/oauth2callback"
 )
-
-# --- vimeo -----------------------------------------------------------------
-VIMEO_ACCESS_TOKEN = os.environ.get("VIMEO_ACCESS_TOKEN", "")
 
 # --- dashboard auth ----------------------------------------------------
 DASHBOARD_USERNAME = os.environ.get("DASHBOARD_USERNAME", "admin")

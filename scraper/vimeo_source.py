@@ -1,22 +1,26 @@
 """
-Vimeo candidate source. Vimeo's catalog skews toward short films rather
-than meme clips, so this is the smallest of the three sources -- one
-search per hourly run, rotated by category like the YouTube search leg.
-Needs a personal/app access token with the default public scope (no user
-OAuth required for read-only public search).
+Vimeo candidate source -- Bright Data's Vimeo Scraper API.
+
+Replaces the old Vimeo API (`/videos` search with a bearer access token)
+with Bright Data's Vimeo Scraper API, which supports discovery by URL and
+by keyword the same way the old integration searched by keyword -- so the
+query rotation and CC-filtered behavior below are the direct equivalent
+of what this module did before, just fed through Bright Data's
+trigger/poll/fetch dataset flow (scraper/brightdata_client.py) instead of
+a direct Vimeo API call.
+
+Vimeo's catalog skews toward short films rather than meme clips, so this
+stays the smallest of the three sources -- one keyword search per hourly
+run, rotated by category like the YouTube search leg.
 """
 import logging
 from datetime import datetime, timezone
 
-import requests
-
 import config
+from scraper.brightdata_client import run_collection
 from scraper.candidate import Candidate
-from scraper.retry import with_backoff
 
 log = logging.getLogger("meme_pipeline.vimeo")
-
-API_BASE = "https://api.vimeo.com"
 
 SEARCH_QUERIES = [
     ("fail compilation", "fails"),
@@ -32,85 +36,76 @@ QUERY_BY_CATEGORY = {cat: q for q, cat in SEARCH_QUERIES}
 CC_LICENSES = {"CC", "CC-BY", "CC-BY-NC", "CC-BY-NC-ND", "CC-BY-NC-SA", "CC-BY-ND", "CC-BY-SA", "CC0"}
 
 
-class _RequestError(Exception):
-    pass
+def _first(row: dict, *keys, default=None):
+    for key in keys:
+        value = row.get(key)
+        if value not in (None, ""):
+            return value
+    return default
 
 
-@with_backoff(exceptions=(_RequestError,), max_attempts=4)
-def _get(path, params):
-    headers = {"Authorization": f"bearer {config.VIMEO_ACCESS_TOKEN}"}
-    resp = requests.get(f"{API_BASE}{path}", params=params, headers=headers, timeout=15)
-    if resp.status_code == 429 or resp.status_code >= 500:
-        raise _RequestError(f"{resp.status_code}: {resp.text[:200]}")
-    resp.raise_for_status()
-    return resp.json()
+def _to_float(value, default=0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_datetime(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _candidate_from_row(row: dict, category: str) -> Candidate | None:
+    license_ = str(_first(row, "license", "license_type", default="")).upper()
+    if license_ and license_ not in CC_LICENSES:
+        return None
+
+    duration = _to_float(_first(row, "duration", "video_duration", default=0))
+    if not (config.MIN_CLIP_DURATION_SEC <= duration <= config.MAX_CLIP_DURATION_SEC):
+        return None
+
+    video_id = _first(row, "video_id", "id")
+    link = _first(row, "url", "link")
+    if not video_id and link:
+        video_id = str(link).rstrip("/").rsplit("/", 1)[-1]
+    if not video_id:
+        return None
+    link = link or f"https://vimeo.com/{video_id}"
+
+    return Candidate(
+        source="vimeo",
+        source_id=str(video_id),
+        source_url=link,
+        media_url=link,
+        category=category,
+        title=_first(row, "title", "name", default=""),
+        author=_first(row, "uploader", "author", "user_name", default=""),
+        score=_to_float(_first(row, "plays", "num_plays", "views", default=0)),
+        published_at=_parse_datetime(_first(row, "upload_date", "release_time", "published_at")),
+    )
 
 
 def _search(query: str, category: str) -> list[Candidate]:
-    try:
-        data = _get(
-            "/videos",
-            {
-                "query": query,
-                "sort": "plays",
-                "direction": "desc",
-                "per_page": 15,
-                "filter": "CC",
-                "fields": "uri,name,link,duration,stats.plays,release_time,license,user.name",
-            },
-        )
-    except (_RequestError, requests.RequestException) as exc:
-        log.warning("Vimeo search failed for %r: %s", query, exc)
-        return []
-
-    candidates = []
-    for item in data.get("data", []):
-        license_ = (item.get("license") or "").upper()
-        if license_ and license_ not in CC_LICENSES:
-            continue
-        duration = item.get("duration") or 0
-        if not (config.MIN_CLIP_DURATION_SEC <= duration <= config.MAX_CLIP_DURATION_SEC):
-            continue
-        uri = item.get("uri", "")
-        video_id = uri.rsplit("/", 1)[-1]
-        if not video_id:
-            continue
-        published_at = None
-        if item.get("release_time"):
-            try:
-                published_at = datetime.fromisoformat(item["release_time"].replace("Z", "+00:00"))
-            except ValueError:
-                pass
-        candidates.append(
-            Candidate(
-                source="vimeo",
-                source_id=video_id,
-                source_url=item.get("link", f"https://vimeo.com/{video_id}"),
-                media_url=item.get("link", f"https://vimeo.com/{video_id}"),
-                category=category,
-                title=item.get("name", ""),
-                author=(item.get("user") or {}).get("name", ""),
-                score=float((item.get("stats") or {}).get("plays") or 0),
-                published_at=published_at,
-            )
-        )
+    inputs = [{"keyword": query, "sort": "plays"}]
+    rows = run_collection(config.BRIGHTDATA_VIMEO_DATASET_ID, inputs)
+    candidates = [c for c in (_candidate_from_row(row, category) for row in rows) if c]
     log.info("Vimeo: gathered %d candidates for query %r", len(candidates), query)
     return candidates
 
 
 def gather_candidates() -> list[Candidate]:
     """Hourly job: one hour-rotated search query."""
-    if not config.VIMEO_ACCESS_TOKEN:
-        log.warning("VIMEO_ACCESS_TOKEN not configured; skipping vimeo source")
-        return []
     query, category = SEARCH_QUERIES[datetime.now(timezone.utc).hour % len(SEARCH_QUERIES)]
     return _search(query, category)
 
 
 def gather_for_category(category: str) -> list[Candidate]:
     """Manual test-snapshot: search using that category's query, regardless of the hour."""
-    if not config.VIMEO_ACCESS_TOKEN:
-        return []
     query = QUERY_BY_CATEGORY.get(category)
     if not query:
         return []

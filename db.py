@@ -48,6 +48,33 @@ def _migrate():
         if "triaged" not in existing:
             conn.execute("ALTER TABLE clips ADD COLUMN triaged INTEGER NOT NULL DEFAULT 0")
 
+        # One-time backfill: seed triage_stats' "keeps" side from clips that
+        # were already triaged=1 before this feature existed. Rejected
+        # historical items were hard-deleted by /triage at the time (no undo,
+        # see README) and are not recoverable -- only kept items can be
+        # backfilled; rejects start counting from whenever this migration
+        # first runs.
+        already_backfilled = conn.execute(
+            "SELECT 1 FROM settings WHERE key = 'triage_stats_backfilled'"
+        ).fetchone()
+        if not already_backfilled:
+            rows = conn.execute(
+                "SELECT source, subreddit, COUNT(*) AS n FROM clips WHERE triaged = 1 "
+                "GROUP BY source, subreddit"
+            ).fetchall()
+            for row in rows:
+                subgroup = row["subreddit"] if row["source"] == "reddit" and row["subreddit"] else "all"
+                conn.execute(
+                    "INSERT INTO triage_stats (source, subgroup, keeps, rejects) VALUES (?, ?, ?, 0) "
+                    "ON CONFLICT(source, subgroup) DO UPDATE SET keeps = keeps + excluded.keeps",
+                    (row["source"], subgroup, row["n"]),
+                )
+            conn.execute(
+                "INSERT INTO settings (key, value, updated_at) VALUES ('triage_stats_backfilled', '1', ?) "
+                "ON CONFLICT(key) DO NOTHING",
+                (utcnow_iso(),),
+            )
+
 
 def utcnow_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -355,3 +382,112 @@ def upsert_subreddit(name: str, category: str) -> None:
 def delete_subreddit(name: str) -> None:
     with get_conn() as conn:
         conn.execute("DELETE FROM subreddits WHERE name = ?", (name,))
+
+
+# --- youtube_hashtags (the live, dashboard-editable YouTube search term list) --
+
+def has_any_hashtags() -> bool:
+    with get_conn() as conn:
+        row = conn.execute("SELECT 1 FROM youtube_hashtags LIMIT 1").fetchone()
+    return row is not None
+
+
+def bulk_seed_hashtags(mapping: dict) -> None:
+    """INSERT OR IGNORE every (hashtag, category) pair -- used once, when the
+    table is empty, to seed it from scraper.youtube_hashtags' default list."""
+    now = utcnow_iso()
+    with get_conn() as conn:
+        conn.executemany(
+            "INSERT OR IGNORE INTO youtube_hashtags (hashtag, category, added_at) VALUES (?, ?, ?)",
+            [(tag, category, now) for tag, category in mapping.items()],
+        )
+
+
+def list_hashtags(category: str | None = None) -> list[str]:
+    query = "SELECT hashtag FROM youtube_hashtags"
+    params: tuple = ()
+    if category:
+        query += " WHERE category = ?"
+        params = (category,)
+    query += " ORDER BY hashtag"
+    with get_conn() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [r["hashtag"] for r in rows]
+
+
+def list_hashtags_full() -> list[dict]:
+    """[{hashtag, category, added_at}, ...], for the /youtube-hashtags dashboard page."""
+    with get_conn() as conn:
+        rows = conn.execute("SELECT * FROM youtube_hashtags ORDER BY category, hashtag COLLATE NOCASE").fetchall()
+    return [dict(r) for r in rows]
+
+
+def find_hashtag_case_insensitive(tag: str) -> str | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT hashtag FROM youtube_hashtags WHERE hashtag = ? COLLATE NOCASE", (tag,)
+        ).fetchone()
+    return row["hashtag"] if row else None
+
+
+def upsert_hashtag(tag: str, category: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO youtube_hashtags (hashtag, category, added_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(hashtag) DO UPDATE SET category = excluded.category",
+            (tag, category, utcnow_iso()),
+        )
+
+
+def delete_hashtag(tag: str) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM youtube_hashtags WHERE hashtag = ?", (tag,))
+
+
+# --- triage_stats (per-source approval/rejection tracking, see app.py's
+# /triage/keep and /triage/reject, and the /stats dashboard page) ----------
+
+def _triage_subgroup(source: str, subreddit: str | None) -> str:
+    return subreddit if source == "reddit" and subreddit else "all"
+
+
+def record_triage_keep(source: str, subreddit: str | None = None) -> None:
+    subgroup = _triage_subgroup(source, subreddit)
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO triage_stats (source, subgroup, keeps, rejects) VALUES (?, ?, 1, 0) "
+            "ON CONFLICT(source, subgroup) DO UPDATE SET keeps = keeps + 1",
+            (source, subgroup),
+        )
+
+
+def record_triage_reject(source: str, subreddit: str | None = None) -> None:
+    subgroup = _triage_subgroup(source, subreddit)
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO triage_stats (source, subgroup, keeps, rejects) VALUES (?, ?, 0, 1) "
+            "ON CONFLICT(source, subgroup) DO UPDATE SET rejects = rejects + 1",
+            (source, subgroup),
+        )
+
+
+def get_triage_stats() -> list[dict]:
+    """Every (source, subgroup) row with keeps/rejects/total/approval_rate,
+    sorted worst-approval-rate-first within each source."""
+    with get_conn() as conn:
+        rows = conn.execute("SELECT * FROM triage_stats").fetchall()
+    stats = []
+    for r in rows:
+        keeps, rejects = r["keeps"], r["rejects"]
+        total = keeps + rejects
+        approval_rate = (keeps / total) if total else None
+        stats.append({
+            "source": r["source"],
+            "subgroup": r["subgroup"],
+            "keeps": keeps,
+            "rejects": rejects,
+            "total": total,
+            "approval_rate": approval_rate,
+        })
+    stats.sort(key=lambda s: (s["approval_rate"] if s["approval_rate"] is not None else 1.0))
+    return stats

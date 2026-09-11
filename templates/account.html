@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Account{% endblock %}
+{% block content %}
+<h1>Account</h1>
+<p class="hint">
+  Change the username and/or password used to log into this dashboard. Takes effect immediately
+  (no restart) and logs you out right away, so you'll need to log back in with the new
+  credentials. Leave the new-username field blank to keep your current username
+  (<strong>{{ current_username }}</strong>).
+</p>
+
+<section class="category-block">
+  <form method="post" action="{{ url_for('account_update') }}" class="settings-field-list">
+    <div class="settings-field">
+      <div class="settings-field-head"><label for="current_password">Current password</label></div>
+      <input type="password" id="current_password" name="current_password" autocomplete="current-password" required>
+    </div>
+    <div class="settings-field">
+      <div class="settings-field-head"><label for="new_username">New username</label></div>
+      <p class="hint settings-field-help">Optional -- leave blank to keep your current username.</p>
+      <input type="text" id="new_username" name="new_username" autocomplete="username" placeholder="{{ current_username }}">
+    </div>
+    <div class="settings-field">
+      <div class="settings-field-head"><label for="new_password">New password</label></div>
+      <p class="hint settings-field-help">Optional -- minimum 8 characters.</p>
+      <input type="password" id="new_password" name="new_password" autocomplete="new-password">
+    </div>
+    <div class="settings-field">
+      <div class="settings-field-head"><label for="confirm_password">Confirm new password</label></div>
+      <input type="password" id="confirm_password" name="confirm_password" autocomplete="new-password">
+    </div>
+    <button type="submit">Update account</button>
+  </form>
+</section>
+{% endblock %}

@@ -10,12 +10,22 @@ droplet.
 
 ## How it fits together
 
+All three scraper sources run on **Bright Data's Scraper APIs**
+(`scraper/brightdata_client.py`) rather than talking to
+Reddit/YouTube/Vimeo directly -- one shared bearer token, one dataset id
+per source, trigger→poll→fetch per collection run. See "Credentials
+you'll need to provide" below.
+
 ```
 scraper/run_hourly.py   systemd timer, hourly -- pulls TWO items/run
-  ├─ reddit_source.py     PRAW, hot+rising across 29 curated subreddits,
-  │                       classifies each post as video / image / gif
-  ├─ youtube_source.py    Data API: mostPopular chart + 1 CC search/run (video only)
-  ├─ vimeo_source.py      1 CC-filtered search/run (video only)
+  ├─ reddit_source.py     Bright Data Reddit Scraper API, hot listing across
+  │                       29 curated subreddits, classifies each post as
+  │                       video / image / gif
+  ├─ youtube_source.py    Bright Data YouTube Scraper API: a trending query
+  │                       per mapped category + 1 hour-rotated category
+  │                       query/hashtag search (video only)
+  ├─ vimeo_source.py      Bright Data Vimeo Scraper API, 1 CC-filtered
+  │                       keyword search/run (video only)
   └─ rank.py               picks the single highest "velocity" candidate
        (engagement / hours-since-posted) in EACH of two separate pools --
        video, and image/gif -- that hasn't been pulled in the last 24h
@@ -50,6 +60,12 @@ app.py (Flask, gunicorn)      dashboard, bound to 127.0.0.1:8080 only
   ├─ /subreddits                add/remove what the hourly scraper pulls
   │                            from -- writes through to the `subreddits`
   │                            DB table, not the hardcoded seed dict
+  ├─ /youtube-hashtags          add/remove YouTube hashtag/keyword search
+  │                            terms per category -- same pattern as
+  │                            /subreddits, its own DB table
+  ├─ /stats                    read-only /triage keep/reject approval
+  │                            rates -- Reddit per subreddit, YouTube and
+  │                            Vimeo each as one source-wide line
   └─ /youtube/authorize        OAuth flow for youtube_upload/upload.py
 
 library.py + library/         manually-curated assets you drop in yourself
@@ -112,10 +128,33 @@ compared against each other -- see `scraper/rank.py`.
 
 YouTube and Vimeo each contribute video candidates too (see module
 docstrings in `scraper/youtube_source.py` / `vimeo_source.py`), rotated
-by hour of day across the same six categories so quota usage stays flat
-and predictable (YouTube: ~1 expensive `search.list` call/hour, well
-inside the 10,000 units/day default quota; see that file's docstring for
-the exact math).
+by hour of day across the same six categories so each hourly run stays
+one Bright Data collection call per source. YouTube's rotated leg is also
+fed that category's curated hashtags/keywords (see the next section) in
+the same collection call.
+
+## YouTube hashtags
+
+`scraper/youtube_hashtags.py` mirrors `scraper/subreddits.py`'s pattern
+for an extra, editable set of hashtag/keyword search terms per category,
+mixed into `youtube_source.py`'s hour-rotated search leg alongside its
+built-in query. **The `/youtube-hashtags` dashboard page is the actual
+way to add or remove them** -- same DB-table-is-the-source-of-truth
+pattern as `/subreddits`.
+
+## Triage approval stats
+
+`/stats` is a read-only view over every `/triage` keep/reject decision,
+tracked separately per source: Reddit broken out by individual
+subreddit, YouTube and Vimeo each as one source-wide line, sorted
+weakest-approval-rate-first within each grouping. It's purely additive
+reporting -- nothing about the triage flow itself changes. Dropping a
+consistently-rejected subreddit is still a manual edit on `/subreddits`
+(same for a weak hashtag on `/youtube-hashtags`); there's no automatic
+pruning. Stats recorded before this feature existed were backfilled for
+kept clips only -- a `/triage` rejection permanently deletes the row, so
+historical rejects aren't recoverable and only count from whenever this
+feature was first deployed.
 
 ## "Most trending" ranking
 
@@ -237,20 +276,26 @@ missing, so you can bring these online one at a time. A blank `.env`
 in whichever keys you have and restart the dashboard/timer to pick them
 up.
 
-- **Reddit**: https://www.reddit.com/prefs/apps -> "create app" -> type
-  "script" -> gives you a client id + secret. Free tier, no billing.
-- **YouTube Data API key**: https://console.cloud.google.com/apis/credentials
-  in a Google Cloud project with "YouTube Data API v3" enabled -> API
-  key (restrict it to that API).
-- **YouTube OAuth client** (for uploading, separate from the API key):
-  same project -> Credentials -> OAuth client ID -> type "Web
-  application" -> add `YT_OAUTH_REDIRECT_URI` (default
+- **Bright Data** (all three scrape sources): https://brightdata.com ->
+  create/sign into an account -> account settings gives you one API
+  token (`BRIGHTDATA_API_KEY`), shared across every dataset you use.
+  Then, under Bright Data's Scraper APIs (Web Scraper IDE / Datasets),
+  set up one collector per source and grab its dataset id:
+  - Reddit Scraper API -> `BRIGHTDATA_REDDIT_DATASET_ID`
+  - YouTube Scraper API -> `BRIGHTDATA_YOUTUBE_DATASET_ID`
+  - Vimeo Scraper API -> `BRIGHTDATA_VIMEO_DATASET_ID`
+
+  Each is billed/rate-limited separately by Bright Data even though auth
+  is unified -- check your Bright Data plan for per-dataset pricing and
+  concurrency limits before turning the hourly job loose.
+- **YouTube OAuth client** (for *uploading* finished compilations --
+  unrelated to the Bright Data YouTube scraper above): a Google Cloud
+  project -> Credentials -> OAuth client ID -> type "Web application" ->
+  add `YT_OAUTH_REDIRECT_URI` (default
   `http://localhost:8080/youtube/oauth2callback`) as an authorized
   redirect URI. First real upload will need the OAuth consent screen
   published (or your Google account added as a test user) since this is
   almost certainly an "unverified" app for personal use.
-- **Vimeo**: https://developer.vimeo.com/apps -> create an app ->
-  generate an access token with the default "public" scope.
 
 Put them all in `.env` (never in code, never committed -- `.env` is in
 `.gitignore` and `deploy/setup_droplet.sh` `chmod 600`s it), or set/update

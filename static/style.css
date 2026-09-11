@@ -188,6 +188,14 @@ button:hover { filter: brightness(1.1); }
 .btn-remove { background: transparent; border: 1px solid var(--error); color: var(--error); padding: 0.3rem 0.7rem; font-size: 0.8rem; }
 .btn-remove:hover { background: var(--error); color: #200606; }
 
+.stats-table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.stats-table th, .stats-table td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
+.stats-table th { color: var(--muted); font-weight: 600; font-size: 0.85rem; }
+.stats-table tr:last-child td { border-bottom: none; }
+.stats-table a { color: var(--text); text-decoration: none; font-family: monospace; }
+.stats-table a:hover { color: var(--accent); }
+.stats-weak td { color: var(--error); }
+
 .nav-badge {
   background: var(--accent);
   color: #0b0d10;

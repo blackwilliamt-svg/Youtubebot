@@ -13,32 +13,32 @@ import db
 
 API_FIELDS = [
     {
-        "key": "REDDIT_CLIENT_ID",
-        "label": "Client ID",
-        "group": "Reddit",
-        "secret": False,
-        "help": "reddit.com/prefs/apps -> create app -> type \"script\".",
-    },
-    {
-        "key": "REDDIT_CLIENT_SECRET",
-        "label": "Client Secret",
-        "group": "Reddit",
+        "key": "BRIGHTDATA_API_KEY",
+        "label": "API Token",
+        "group": "Bright Data",
         "secret": True,
-        "help": "From the same reddit.com/prefs/apps app.",
+        "help": "brightdata.com account settings -> API token. Shared across all three datasets below.",
     },
     {
-        "key": "REDDIT_USER_AGENT",
-        "label": "User Agent",
-        "group": "Reddit",
+        "key": "BRIGHTDATA_REDDIT_DATASET_ID",
+        "label": "Reddit Dataset ID",
+        "group": "Bright Data",
         "secret": False,
-        "help": "Reddit requires a descriptive, unique user agent string.",
+        "help": "Dataset id for the Bright Data Reddit Scraper API.",
     },
     {
-        "key": "YOUTUBE_API_KEY",
-        "label": "API Key",
-        "group": "YouTube Data API",
-        "secret": True,
-        "help": "Google Cloud Console -> Credentials -> API key, restricted to \"YouTube Data API v3\".",
+        "key": "BRIGHTDATA_YOUTUBE_DATASET_ID",
+        "label": "YouTube Dataset ID",
+        "group": "Bright Data",
+        "secret": False,
+        "help": "Dataset id for the Bright Data YouTube Scraper API.",
+    },
+    {
+        "key": "BRIGHTDATA_VIMEO_DATASET_ID",
+        "label": "Vimeo Dataset ID",
+        "group": "Bright Data",
+        "secret": False,
+        "help": "Dataset id for the Bright Data Vimeo Scraper API.",
     },
     {
         "key": "YT_OAUTH_CLIENT_ID",
@@ -60,13 +60,6 @@ API_FIELDS = [
         "group": "YouTube OAuth (uploads)",
         "secret": False,
         "help": "Must be added as an authorized redirect URI on the OAuth client.",
-    },
-    {
-        "key": "VIMEO_ACCESS_TOKEN",
-        "label": "Access Token",
-        "group": "Vimeo",
-        "secret": True,
-        "help": "developer.vimeo.com/apps -> generate a token with the default \"public\" scope.",
     },
 ]
 
