@@ -82,19 +82,34 @@ def _first_image_url(row: dict):
     return _first(row, "image_url", "thumbnail")
 
 
+def _first_list_url(row: dict, *keys):
+    """Bright Data's newer Reddit shape returns media as a bare list of URL strings
+    (row["videos"] / row["photos"]) instead of a single video_url/image_url field."""
+    for key in keys:
+        values = row.get(key)
+        if isinstance(values, list) and values:
+            first = values[0]
+            if isinstance(first, dict):
+                return first.get("url") or first.get("href")
+            if first:
+                return str(first)
+    return None
+
+
 def _classify_row(row: dict, post_url: str):
     """Returns ('video'|'image'|'gif', media_url) or (None, None) for a post shape we don't handle."""
     if row.get("is_gallery"):
         return None, None  # multi-image galleries -- not handled, keep it simple
 
-    video_url = _first(row, "video_url", "video")
+    video_list_url = _first_list_url(row, "videos")
+    video_url = _first(row, "video_url", "video") or video_list_url
     is_video = bool(row.get("is_video")) or bool(video_url) or _first(row, "post_type") == "video"
     url = (post_url or "").lower()
     if is_video or any(domain in url for domain in VIDEO_DOMAINS) or url.endswith((".mp4", ".gifv", ".webm")):
-        return "video", post_url  # permalink -- yt-dlp target, same as before
+        return "video", video_url or post_url
     if url.endswith(".gif"):
         return "gif", post_url
-    image_url = _first_image_url(row)
+    image_url = _first_image_url(row) or _first_list_url(row, "photos", "images")
     if image_url or url.endswith(IMAGE_EXTS):
         return "image", image_url or post_url
     return None, None
@@ -110,11 +125,16 @@ def _duration_hint(row: dict):
 
 def _candidate_from_row(row: dict, subreddit_name: str) -> Candidate | None:
     post_id = _first(row, "post_id", "id")
-    permalink = _first(row, "url", "post_url", "permalink")
-    if not post_id or not permalink:
+    if not post_id:
         return None
-    if not str(permalink).startswith("http"):
-        permalink = f"https://www.reddit.com{permalink}"
+    # Bright Data's current Reddit shape doesn't echo a per-post permalink field
+    # ("url"/"post_url"/"permalink" all come back as the subreddit's own URL or null),
+    # so build the real post permalink ourselves from post_id + subreddit.
+    short_id = str(post_id).split("_")[-1]
+    permalink = f"https://www.reddit.com/r/{subreddit_name}/comments/{short_id}/"
+    raw_link = _first(row, "url", "post_url", "permalink")
+    if raw_link and str(raw_link).startswith("http") and "/comments/" in str(raw_link):
+        permalink = str(raw_link)
 
     media_type, media_url = _classify_row(row, permalink)
     if media_type is None:
@@ -145,7 +165,7 @@ def _gather_from_subreddits(subreddit_names: list[str]) -> list[Candidate]:
     if not subreddit_names:
         return []
     inputs = [
-        {"url": f"https://www.reddit.com/r/{name}/", "sort_by": "hot", "num_of_posts": config.REDDIT_LISTING_LIMIT * 2}
+        {"url": f"https://www.reddit.com/r/{name}/"}
         for name in subreddit_names
     ]
     rows = run_collection(config.BRIGHTDATA_REDDIT_DATASET_ID, inputs)
