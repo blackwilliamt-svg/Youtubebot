@@ -15,6 +15,19 @@ def _connect():
     conn = sqlite3.connect(config.DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # The module docstring above has always claimed WAL mode is on, but this
+    # pragma was never actually set -- the DB has been running in SQLite's
+    # default rollback-journal mode the whole time. In that mode a writer
+    # (the hourly scraper inserting new clips) locks the *entire* database
+    # file for the duration of its transaction, blocking any other writer
+    # (e.g. a triage keep/reject DELETE) until the lock clears or the
+    # connect-time timeout (30s) is hit. That's why clicking Delete in
+    # /triage can appear to freeze the page for up to 30s and then land on
+    # a 500 (sqlite3.OperationalError: database is locked) if it loses the
+    # race. WAL mode lets readers and a single writer proceed concurrently
+    # instead of blocking each other.
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 30000")
     return conn
 
 
@@ -33,6 +46,7 @@ def init_db():
     with get_conn() as conn:
         conn.executescript(schema_path.read_text())
     _migrate()
+    _migrate_scrape_runs_fk()
 
 
 def _migrate():
@@ -491,3 +505,53 @@ def get_triage_stats() -> list[dict]:
         })
     stats.sort(key=lambda s: (s["approval_rate"] if s["approval_rate"] is not None else 1.0))
     return stats
+
+
+def _migrate_scrape_runs_fk():
+    """
+    scrape_runs.clip_id originally had a plain
+    FOREIGN KEY (clip_id) REFERENCES clips(id) with no ON DELETE clause
+    (defaults to NO ACTION). That blocks deleting a clip once it has
+    ever been logged as a scrape_runs.clip_id, raising
+    sqlite3.IntegrityError: FOREIGN KEY constraint failed on the
+    /triage reject -> db.delete_clip path. Rebuilds scrape_runs with
+    ON DELETE SET NULL instead. SQLite can't ALTER an existing foreign
+    key, so this uses the documented table-rebuild pattern, and is a
+    no-op if the fix is already applied.
+    """
+    with get_conn() as conn:
+        fk_rows = conn.execute("PRAGMA foreign_key_list(scrape_runs)").fetchall()
+        already_fixed = any(
+            row["table"] == "clips" and (row["on_delete"] or "").upper() == "SET NULL"
+            for row in fk_rows
+        )
+        if already_fixed:
+            return
+
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("BEGIN")
+        try:
+            conn.execute(
+                """
+                CREATE TABLE scrape_runs_new (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_at          TEXT    NOT NULL,
+                    candidates_seen INTEGER NOT NULL DEFAULT 0,
+                    clip_id         INTEGER,
+                    note            TEXT,
+                    FOREIGN KEY (clip_id) REFERENCES clips(id) ON DELETE SET NULL
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO scrape_runs_new (id, run_at, candidates_seen, clip_id, note) "
+                "SELECT id, run_at, candidates_seen, clip_id, note FROM scrape_runs"
+            )
+            conn.execute("DROP TABLE scrape_runs")
+            conn.execute("ALTER TABLE scrape_runs_new RENAME TO scrape_runs")
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.execute("PRAGMA foreign_keys = ON")
