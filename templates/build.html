@@ -2,7 +2,7 @@
 {% block title %}Build - {{ date_str }}{% endblock %}
 {% block content %}
 <h1>Build compilation</h1>
-<p class="hint">Add clips, images/GIFs, and reaction clips below, then use ▲▼ to arrange the order. Reaction clips are never inserted automatically -- drop them in wherever you want.</p>
+<p class="hint">Add clips, images/GIFs, and reaction clips below, then use ▲▼ to arrange the order. Reaction clips are never inserted automatically -- drop them in wherever you want. Each video in the sequence has its own "start at" (skip the first N seconds instead of always using the beginning) and volume (0 = mute, up to {{ max_item_volume }}x boosted) controls; pick a transition style below before building.</p>
 
 <div class="build-layout">
   <div class="build-sources">
@@ -71,7 +71,15 @@
     <p id="seq-empty" class="empty">Nothing added yet — click "+ Add" on clips to the left.</p>
 
     <form method="post" action="{{ url_for('build_run') }}" id="build-run-form">
-      <div id="hidden-refs"></div>
+      <label class="transition-picker">
+        Transition style
+        <select name="transition">
+          {% for t in transitions %}
+            <option value="{{ t }}" {% if t == default_transition %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <input type="hidden" name="sequence_json" id="sequence-json">
       <button type="submit" id="build-submit-btn">Build compilation</button>
     </form>
   </div>
@@ -79,7 +87,12 @@
 
 <script>
   const SOFT_WARNING_COUNT = {{ soft_warning_count }};
+  const MAX_ITEM_VOLUME = {{ max_item_volume }};
   let sequence = {{ initial_items | tojson }};
+  sequence.forEach((item) => {
+    if (item.trim_start === undefined) item.trim_start = 0;
+    if (item.volume === undefined) item.volume = 1;
+  });
 
   const listEl = document.getElementById('sequence-list');
   const emptyEl = document.getElementById('seq-empty');
@@ -109,6 +122,45 @@
       li.appendChild(preview);
       li.appendChild(meta);
       li.appendChild(controls);
+
+      const editRow = document.createElement('div');
+      editRow.className = 'sequence-edit';
+
+      if (item.media_type === 'video') {
+        const trimLabel = document.createElement('label');
+        trimLabel.textContent = 'Start at (s)';
+        const trimInput = document.createElement('input');
+        trimInput.type = 'number';
+        trimInput.min = '0';
+        trimInput.step = '0.5';
+        trimInput.value = item.trim_start;
+        trimInput.title = 'Skip this many seconds from the start of the clip before using it -- lets you use the middle/end of a clip instead of always the beginning.';
+        trimInput.addEventListener('change', () => {
+          item.trim_start = Math.max(0, parseFloat(trimInput.value) || 0);
+          trimInput.value = item.trim_start;
+        });
+        trimLabel.appendChild(trimInput);
+        editRow.appendChild(trimLabel);
+
+        const volLabel = document.createElement('label');
+        volLabel.textContent = 'Volume';
+        const volInput = document.createElement('input');
+        volInput.type = 'number';
+        volInput.min = '0';
+        volInput.max = String(MAX_ITEM_VOLUME);
+        volInput.step = '0.1';
+        volInput.value = item.volume;
+        volInput.title = '0 = muted, 1 = normal, up to ' + MAX_ITEM_VOLUME + 'x boosted.';
+        volInput.addEventListener('change', () => {
+          const v = Math.max(0, Math.min(MAX_ITEM_VOLUME, parseFloat(volInput.value)));
+          item.volume = isNaN(v) ? 1 : v;
+          volInput.value = item.volume;
+        });
+        volLabel.appendChild(volInput);
+        editRow.appendChild(volLabel);
+      }
+
+      li.appendChild(editRow);
       listEl.appendChild(li);
     });
 
@@ -148,7 +200,7 @@
   }
 
   function addItem(ref, title, category, mediaType, url) {
-    sequence.push({ref, title, category, media_type: mediaType, url});
+    sequence.push({ref, title, category, media_type: mediaType, url, trim_start: 0, volume: 1});
     render();
   }
 
@@ -164,15 +216,9 @@
       alert('Add at least one item to the sequence first.');
       return;
     }
-    const container = document.getElementById('hidden-refs');
-    container.innerHTML = '';
-    sequence.forEach((item) => {
-      const input = document.createElement('input');
-      input.type = 'hidden';
-      input.name = 'ref';
-      input.value = item.ref;
-      container.appendChild(input);
-    });
+    document.getElementById('sequence-json').value = JSON.stringify(
+      sequence.map(({ref, trim_start, volume}) => ({ref, trim_start, volume}))
+    );
   });
 
   render();

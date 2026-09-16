@@ -293,4 +293,12 @@ button:hover { filter: brightness(1.1); }
 .sequence-meta { font-size: 0.8rem; overflow: hidden; }
 .sequence-controls { display: flex; gap: 0.2rem; }
 .sequence-controls button { padding: 0.2rem 0.4rem; font-size: 0.7rem; }
+.sequence-edit {
+  grid-column: 1 / -1;
+  display: flex; gap: 1rem; flex-wrap: wrap;
+  font-size: 0.75rem; color: var(--muted);
+}
+.sequence-edit label { display: flex; align-items: center; gap: 0.4rem; }
+.sequence-edit input[type=number] { width: 4.5rem; }
+.transition-picker { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; margin-bottom: 0.75rem; }
 #build-submit-btn { width: 100%; margin-top: 1rem; padding: 0.75rem; }

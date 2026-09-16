@@ -205,8 +205,17 @@ publishable to GitHub).
    after the fact instead of only in the moment.
 3. **`/build`** -- add checked items (pre-seeded from `/review`), more
    clips, and/or reaction-library clips; use ▲▼ to arrange the exact
-   order (reaction clips are only ever inserted here, manually); submit
-   to kick off the ffmpeg build on a background thread.
+   order (reaction clips are only ever inserted here, manually). Each
+   video in the sequence gets its own **start-at** offset (skip the first
+   N seconds instead of always taking the beginning -- lets you use the
+   best part of a clip, not just whatever happens to be first) and
+   **volume** control (0 = mute, up to 3x boosted -- handy for a clip
+   whose native audio clashes with background music, or one you want
+   silent under a reaction sfx). Pick a **transition style** from
+   ffmpeg's xfade presets (fade, wipes, slides, circlecrop, dissolve,
+   pixelize) before submitting; an unrecognized value falls back to
+   `fade` rather than failing the build. Submit to kick off the ffmpeg
+   build on a background thread.
 4. **`/compilations`** -- preview the finished MP4, optionally attach a
    custom thumbnail (jpg/png, YouTube's 2MB cap enforced client-side
    before upload), and upload to YouTube (defaults to private). If

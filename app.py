@@ -12,6 +12,7 @@ run on background threads with progress tracked in the `jobs` table so
 the browser can poll instead of holding a request open.
 """
 import functools
+import json
 import logging
 import tempfile
 import threading
@@ -29,7 +30,8 @@ import api_settings
 import config
 import db
 import library
-from compiler.build import BuildError, build_compilation
+from compiler.build import (ALLOWED_TRANSITIONS, DEFAULT_TRANSITION, MAX_ITEM_VOLUME,
+                             BuildError, build_compilation)
 from manual_import import ManualImportError, import_url
 from manual_upload import ManualUploadError, import_file
 from scraper.snapshot import run_test_snapshot
@@ -204,15 +206,31 @@ def triage_reject(clip_id):
 # --- build sequencer (pick clips/images/gifs + manually-inserted reaction
 # clips, arrange the order, then hand the ordered ref list to /build/run) ---
 
-def _resolve_sequence(refs: list[str]) -> list[dict]:
+def _clamp_float(value, default, lo, hi):
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(v, hi))
+
+
+def _resolve_sequence(entries: list[dict]) -> list[dict]:
     """
-    ref -> resolved item dict with the fields compiler.build.build_compilation
+    entries: [{"ref": "clip:15"|"reaction:fails/boing.mp4", "trim_start": float?, "volume": float?}, ...]
+    -> resolved item dicts with the fields compiler.build.build_compilation
     needs. "clip:<id>" resolves against the DB; "reaction:<category>/<file>"
     resolves against library/reactions/ (path-traversal guarded). Unknown
-    or missing refs are silently dropped.
+    or missing refs are silently dropped. trim_start/volume are clamped
+    here too (build_compilation clamps again against each item's actual
+    duration, since that isn't known until the file's been probed) so a
+    tampered form value can't smuggle through something wild.
     """
     items = []
-    for ref in refs:
+    for entry in entries:
+        ref = entry.get("ref", "")
+        trim_start = _clamp_float(entry.get("trim_start"), 0.0, 0.0, 3600.0)
+        volume = _clamp_float(entry.get("volume"), 1.0, 0.0, MAX_ITEM_VOLUME)
+
         kind, _, rest = ref.partition(":")
         if kind == "clip":
             if not rest.isdigit():
@@ -224,6 +242,7 @@ def _resolve_sequence(refs: list[str]) -> list[dict]:
                 "ref": ref, "id": clip["id"], "media_type": clip["media_type"],
                 "category": clip["category"], "file_path": clip["file_path"],
                 "title": clip.get("title") or "",
+                "trim_start": trim_start, "volume": volume,
             })
         elif kind == "reaction":
             try:
@@ -239,6 +258,7 @@ def _resolve_sequence(refs: list[str]) -> list[dict]:
                 "ref": ref, "id": None, "media_type": media_type,
                 "category": category, "file_path": str(path),
                 "title": path.stem,
+                "trim_start": trim_start, "volume": volume,
             })
     return items
 
@@ -248,7 +268,7 @@ def _resolve_sequence(refs: list[str]) -> list[dict]:
 def build_screen():
     date_str = request.args.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     requested_ids = [v for v in request.args.getlist("clip_id") if v.isdigit()]
-    initial_items = _resolve_sequence([f"clip:{i}" for i in requested_ids])
+    initial_items = _resolve_sequence([{"ref": f"clip:{i}"} for i in requested_ids])
     for it in initial_items:
         rel = _media_rel(it["file_path"])
         it["url"] = url_for("media", subpath=rel) if rel else ""
@@ -273,24 +293,36 @@ def build_screen():
         initial_items=initial_items,
         available_dates=db.get_available_dates(),
         soft_warning_count=10,
+        max_item_volume=MAX_ITEM_VOLUME,
+        transitions=ALLOWED_TRANSITIONS,
+        default_transition=DEFAULT_TRANSITION,
     )
 
 
 @app.route("/build/run", methods=["POST"])
 @login_required
 def build_run():
-    refs = request.form.getlist("ref")
-    items = _resolve_sequence(refs)
+    try:
+        entries = json.loads(request.form.get("sequence_json") or "[]")
+        if not isinstance(entries, list):
+            entries = []
+    except ValueError:
+        entries = []
+    items = _resolve_sequence(entries)
     if not items:
         flash("Add at least one item to the sequence first.", "error")
         return redirect(url_for("build_screen"))
+
+    transition = request.form.get("transition", DEFAULT_TRANSITION)
+    if transition not in ALLOWED_TRANSITIONS:
+        transition = DEFAULT_TRANSITION
 
     job_id = db.create_job("build")
 
     def _worker():
         db.update_job(job_id, status="running", message="Building compilation...")
         try:
-            result = build_compilation(items)
+            result = build_compilation(items, transition=transition)
             db.update_job(job_id, status="done", ref_id=result["id"], message="Ready")
         except BuildError as exc:
             db.update_job(job_id, status="error", message=str(exc))
