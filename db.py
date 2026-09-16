@@ -56,6 +56,24 @@ def _migrate():
     an existing table). Safe to call every startup.
     """
     with get_conn() as conn:
+        # One-time migration: this table used to hold YouTube search
+        # hashtags, back when YouTube (not TikTok) was the keyword/hashtag-
+        # driven source. schema.sql (run just above, before this function)
+        # already created an empty tiktok_hashtags table for fresh installs
+        # -- on an existing droplet DB the old youtube_hashtags table is
+        # still sitting there too, so merge its already-curated hashtags
+        # into the new table instead of silently starting from empty, then
+        # drop the old one.
+        tables = {row["name"] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )}
+        if "youtube_hashtags" in tables:
+            conn.execute(
+                "INSERT OR IGNORE INTO tiktok_hashtags (hashtag, category, added_at) "
+                "SELECT hashtag, category, added_at FROM youtube_hashtags"
+            )
+            conn.execute("DROP TABLE youtube_hashtags")
+
         existing = {row["name"] for row in conn.execute("PRAGMA table_info(clips)")}
         if "media_type" not in existing:
             conn.execute("ALTER TABLE clips ADD COLUMN media_type TEXT NOT NULL DEFAULT 'video'")
@@ -398,27 +416,27 @@ def delete_subreddit(name: str) -> None:
         conn.execute("DELETE FROM subreddits WHERE name = ?", (name,))
 
 
-# --- youtube_hashtags (the live, dashboard-editable YouTube search term list) --
+# --- tiktok_hashtags (the live, dashboard-editable TikTok search term list) --
 
 def has_any_hashtags() -> bool:
     with get_conn() as conn:
-        row = conn.execute("SELECT 1 FROM youtube_hashtags LIMIT 1").fetchone()
+        row = conn.execute("SELECT 1 FROM tiktok_hashtags LIMIT 1").fetchone()
     return row is not None
 
 
 def bulk_seed_hashtags(mapping: dict) -> None:
     """INSERT OR IGNORE every (hashtag, category) pair -- used once, when the
-    table is empty, to seed it from scraper.youtube_hashtags' default list."""
+    table is empty, to seed it from scraper.tiktok_hashtags' default list."""
     now = utcnow_iso()
     with get_conn() as conn:
         conn.executemany(
-            "INSERT OR IGNORE INTO youtube_hashtags (hashtag, category, added_at) VALUES (?, ?, ?)",
+            "INSERT OR IGNORE INTO tiktok_hashtags (hashtag, category, added_at) VALUES (?, ?, ?)",
             [(tag, category, now) for tag, category in mapping.items()],
         )
 
 
 def list_hashtags(category: str | None = None) -> list[str]:
-    query = "SELECT hashtag FROM youtube_hashtags"
+    query = "SELECT hashtag FROM tiktok_hashtags"
     params: tuple = ()
     if category:
         query += " WHERE category = ?"
@@ -430,16 +448,16 @@ def list_hashtags(category: str | None = None) -> list[str]:
 
 
 def list_hashtags_full() -> list[dict]:
-    """[{hashtag, category, added_at}, ...], for the /youtube-hashtags dashboard page."""
+    """[{hashtag, category, added_at}, ...], for the /tiktok-hashtags dashboard page."""
     with get_conn() as conn:
-        rows = conn.execute("SELECT * FROM youtube_hashtags ORDER BY category, hashtag COLLATE NOCASE").fetchall()
+        rows = conn.execute("SELECT * FROM tiktok_hashtags ORDER BY category, hashtag COLLATE NOCASE").fetchall()
     return [dict(r) for r in rows]
 
 
 def find_hashtag_case_insensitive(tag: str) -> str | None:
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT hashtag FROM youtube_hashtags WHERE hashtag = ? COLLATE NOCASE", (tag,)
+            "SELECT hashtag FROM tiktok_hashtags WHERE hashtag = ? COLLATE NOCASE", (tag,)
         ).fetchone()
     return row["hashtag"] if row else None
 
@@ -447,7 +465,7 @@ def find_hashtag_case_insensitive(tag: str) -> str | None:
 def upsert_hashtag(tag: str, category: str) -> None:
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO youtube_hashtags (hashtag, category, added_at) VALUES (?, ?, ?) "
+            "INSERT INTO tiktok_hashtags (hashtag, category, added_at) VALUES (?, ?, ?) "
             "ON CONFLICT(hashtag) DO UPDATE SET category = excluded.category",
             (tag, category, utcnow_iso()),
         )
@@ -455,7 +473,7 @@ def upsert_hashtag(tag: str, category: str) -> None:
 
 def delete_hashtag(tag: str) -> None:
     with get_conn() as conn:
-        conn.execute("DELETE FROM youtube_hashtags WHERE hashtag = ?", (tag,))
+        conn.execute("DELETE FROM tiktok_hashtags WHERE hashtag = ?", (tag,))
 
 
 # --- triage_stats (per-source approval/rejection tracking, see app.py's

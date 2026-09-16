@@ -16,7 +16,7 @@ import sys
 import config
 import db
 from lockutil import pipeline_lock
-from scraper import rank, reddit_source, vimeo_source, youtube_source
+from scraper import instagram_source, rank, reddit_source, tiktok_source
 
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL, logging.INFO),
@@ -27,7 +27,7 @@ log = logging.getLogger("meme_pipeline.run_hourly")
 
 def gather_all_candidates():
     candidates = []
-    for source_module in (reddit_source, youtube_source, vimeo_source):
+    for source_module in (reddit_source, tiktok_source, instagram_source):
         try:
             candidates += source_module.gather_candidates()
         except Exception:

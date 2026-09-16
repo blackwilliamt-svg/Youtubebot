@@ -6,7 +6,7 @@ from typing import Optional
 
 @dataclass
 class Candidate:
-    source: str            # 'reddit' | 'youtube' | 'vimeo'
+    source: str            # 'reddit' | 'tiktok' | 'instagram'
     source_id: str
     source_url: str
     media_url: str          # url the downloader should fetch (yt-dlp target for video, direct url for image/gif)

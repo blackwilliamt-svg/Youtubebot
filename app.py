@@ -30,7 +30,7 @@ from compiler.build import BuildError, build_compilation
 from manual_import import ManualImportError, import_url
 from scraper.snapshot import run_test_snapshot
 from scraper import subreddits as subreddits_module
-from scraper import youtube_hashtags as hashtags_module
+from scraper import tiktok_hashtags as hashtags_module
 from scraper.subreddits import CATEGORIES
 from youtube_upload import oauth as yt_oauth
 from youtube_upload.upload import UploadError, upload_video
@@ -370,18 +370,18 @@ def subreddits_remove(name):
     return redirect(url_for("subreddits"))
 
 
-@app.route("/youtube-hashtags")
+@app.route("/tiktok-hashtags")
 @login_required
-def youtube_hashtags():
+def tiktok_hashtags():
     by_category = {cat: [] for cat in CATEGORIES}
     for h in hashtags_module.all_hashtags_with_categories():
         by_category.setdefault(h["category"], []).append(h)
-    return render_template("youtube_hashtags.html", by_category=by_category)
+    return render_template("tiktok_hashtags.html", by_category=by_category)
 
 
-@app.route("/youtube-hashtags/add", methods=["POST"])
+@app.route("/tiktok-hashtags/add", methods=["POST"])
 @login_required
-def youtube_hashtags_add():
+def tiktok_hashtags_add():
     tag = request.form.get("hashtag", "")
     category = request.form.get("category", "")
     try:
@@ -389,15 +389,15 @@ def youtube_hashtags_add():
         flash(f"Added {stored_tag} to {category}.", "success")
     except ValueError as exc:
         flash(str(exc), "error")
-    return redirect(url_for("youtube_hashtags"))
+    return redirect(url_for("tiktok_hashtags"))
 
 
-@app.route("/youtube-hashtags/<path:tag>/remove", methods=["POST"])
+@app.route("/tiktok-hashtags/<path:tag>/remove", methods=["POST"])
 @login_required
-def youtube_hashtags_remove(tag):
+def tiktok_hashtags_remove(tag):
     hashtags_module.remove_hashtag(tag)
     flash(f"Removed {tag}. Already-pulled clips from it are untouched.", "success")
-    return redirect(url_for("youtube_hashtags"))
+    return redirect(url_for("tiktok_hashtags"))
 
 
 # --- triage approval stats (read-only, per source) -------------------------
@@ -407,13 +407,13 @@ def youtube_hashtags_remove(tag):
 def stats_page():
     all_stats = db.get_triage_stats()
     reddit_stats = [s for s in all_stats if s["source"] == "reddit"]
-    youtube_stats = next((s for s in all_stats if s["source"] == "youtube"), None)
-    vimeo_stats = next((s for s in all_stats if s["source"] == "vimeo"), None)
+    tiktok_stats = next((s for s in all_stats if s["source"] == "tiktok"), None)
+    instagram_stats = next((s for s in all_stats if s["source"] == "instagram"), None)
     return render_template(
         "stats.html",
         reddit_stats=reddit_stats,
-        youtube_stats=youtube_stats,
-        vimeo_stats=vimeo_stats,
+        tiktok_stats=tiktok_stats,
+        instagram_stats=instagram_stats,
     )
 
 

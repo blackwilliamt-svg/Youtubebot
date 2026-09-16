@@ -31,13 +31,13 @@ for d in (MEDIA_ROOT, SFX_DIR, YT_TOKEN_PATH.parent, LOCK_DIR,
           SFX_LIBRARY_DIR, REACTIONS_LIBRARY_DIR, MUSIC_LIBRARY_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
-# --- bright data (scraper apis for reddit / youtube / vimeo) --------------
+# --- bright data (scraper apis for reddit / tiktok / instagram) --------------
 # One account, one bearer token -- each source is just a different dataset
 # id on the same token. See README.md for where to get each dataset id.
 BRIGHTDATA_API_KEY = os.environ.get("BRIGHTDATA_API_KEY", "")
 BRIGHTDATA_REDDIT_DATASET_ID = os.environ.get("BRIGHTDATA_REDDIT_DATASET_ID", "")
-BRIGHTDATA_YOUTUBE_DATASET_ID = os.environ.get("BRIGHTDATA_YOUTUBE_DATASET_ID", "")
-BRIGHTDATA_VIMEO_DATASET_ID = os.environ.get("BRIGHTDATA_VIMEO_DATASET_ID", "")
+BRIGHTDATA_TIKTOK_DATASET_ID = os.environ.get("BRIGHTDATA_TIKTOK_DATASET_ID", "")
+BRIGHTDATA_INSTAGRAM_DATASET_ID = os.environ.get("BRIGHTDATA_INSTAGRAM_DATASET_ID", "")
 BRIGHTDATA_POLL_INTERVAL_SEC = float(os.environ.get("BRIGHTDATA_POLL_INTERVAL_SEC", "5"))
 BRIGHTDATA_POLL_TIMEOUT_SEC = float(os.environ.get("BRIGHTDATA_POLL_TIMEOUT_SEC", "300"))
 

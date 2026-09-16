@@ -2,7 +2,7 @@
 Manual "Run Test Snapshot" button (see app.py's /snapshot/run). For each
 of the 6 categories, pulls the single top-ranked video AND the single
 top-ranked image/GIF currently trending in that category's subreddits
-(plus YouTube/Vimeo's per-category query) -- a one-time snapshot, not a
+(plus TikTok/Instagram's per-category query) -- a one-time snapshot, not a
 simulated 24h run. Reuses the exact same ranking (scraper/rank.py) and
 per-source rate-limit backoff already used by the hourly job, and the
 same 24h dedup log, so it can't double-pull something the hourly job
@@ -17,7 +17,7 @@ from typing import Callable, Optional
 import config
 import db
 from lockutil import pipeline_lock
-from scraper import rank, reddit_source, vimeo_source, youtube_source
+from scraper import instagram_source, rank, reddit_source, tiktok_source
 from scraper.subreddits import CATEGORIES
 
 log = logging.getLogger("meme_pipeline.snapshot")
@@ -25,7 +25,7 @@ log = logging.getLogger("meme_pipeline.snapshot")
 
 def _gather_for_category(category: str):
     candidates = []
-    for source_module in (reddit_source, youtube_source, vimeo_source):
+    for source_module in (reddit_source, tiktok_source, instagram_source):
         try:
             candidates += source_module.gather_for_category(category)
         except Exception:

@@ -93,12 +93,12 @@ CREATE TABLE IF NOT EXISTS subreddits (
     added_at        TEXT    NOT NULL
 );
 
--- The live, editable YouTube hashtag/keyword source list (dashboard's
--- /youtube-hashtags page) -- mirrors the `subreddits` table's pattern.
--- Seeded once from scraper/youtube_hashtags.py's DEFAULT_HASHTAG_CATEGORY
+-- The live, editable TikTok hashtag/keyword source list (dashboard's
+-- /tiktok-hashtags page) -- mirrors the `subreddits` table's pattern.
+-- Seeded once from scraper/tiktok_hashtags.py's DEFAULT_HASHTAG_CATEGORY
 -- the first time this table is empty; after that this table is the source
--- of truth scraper/youtube_source.py actually reads.
-CREATE TABLE IF NOT EXISTS youtube_hashtags (
+-- of truth scraper/tiktok_source.py actually reads.
+CREATE TABLE IF NOT EXISTS tiktok_hashtags (
     hashtag         TEXT PRIMARY KEY,                 -- as typed, e.g. "#satisfying" or "satisfying"
     category        TEXT    NOT NULL,                 -- one of scraper.subreddits.CATEGORIES
     added_at        TEXT    NOT NULL
@@ -106,12 +106,12 @@ CREATE TABLE IF NOT EXISTS youtube_hashtags (
 
 -- Per-source triage approval stats, updated on every /triage keep or
 -- reject. Kept separate by source, and for reddit further broken out by
--- subreddit -- youtube/vimeo are each a single row ("all") since they
+-- subreddit -- tiktok/instagram are each a single row ("all") since they
 -- aren't list-based sources the same way. See db.py's record_triage_*
 -- and get_triage_stats().
 CREATE TABLE IF NOT EXISTS triage_stats (
-    source          TEXT    NOT NULL,                 -- 'reddit' | 'youtube' | 'vimeo'
-    subgroup        TEXT    NOT NULL,                 -- subreddit name for reddit, 'all' for youtube/vimeo
+    source          TEXT    NOT NULL,                 -- 'reddit' | 'tiktok' | 'instagram'
+    subgroup        TEXT    NOT NULL,                 -- subreddit name for reddit, 'all' for tiktok/instagram
     keeps           INTEGER NOT NULL DEFAULT 0,
     rejects         INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (source, subgroup)

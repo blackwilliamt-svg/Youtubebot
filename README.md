@@ -1,7 +1,7 @@
 # meme-pipeline
 
 Scrapes trending meme/fail/animal/gaming/wins clips (video **and**
-images/GIFs) from Reddit, YouTube and Vimeo once an hour, lets you triage
+images/GIFs) from Reddit, TikTok and Instagram once an hour, lets you triage
 and pick items from a local web dashboard, stitches the picks (plus any
 manually-inserted reaction clips) into a vertical YouTube Shorts
 compilation with sound effects and background music, and uploads the
@@ -12,7 +12,7 @@ droplet.
 
 All three scraper sources run on **Bright Data's Scraper APIs**
 (`scraper/brightdata_client.py`) rather than talking to
-Reddit/YouTube/Vimeo directly -- one shared bearer token, one dataset id
+Reddit/TikTok/Instagram directly -- one shared bearer token, one dataset id
 per source, trigger→poll→fetch per collection run. See "Credentials
 you'll need to provide" below.
 
@@ -21,10 +21,10 @@ scraper/run_hourly.py   systemd timer, hourly -- pulls TWO items/run
   ├─ reddit_source.py     Bright Data Reddit Scraper API, hot listing across
   │                       29 curated subreddits, classifies each post as
   │                       video / image / gif
-  ├─ youtube_source.py    Bright Data YouTube Scraper API: a trending query
+  ├─ tiktok_source.py     Bright Data TikTok Scraper API: a trending query
   │                       per mapped category + 1 hour-rotated category
   │                       query/hashtag search (video only)
-  ├─ vimeo_source.py      Bright Data Vimeo Scraper API, 1 CC-filtered
+  ├─ instagram_source.py  Bright Data Instagram Scraper API, 1 reels-only
   │                       keyword search/run (video only)
   └─ rank.py               picks the single highest "velocity" candidate
        (engagement / hours-since-posted) in EACH of two separate pools --
@@ -60,12 +60,12 @@ app.py (Flask, gunicorn)      dashboard, bound to 127.0.0.1:8080 only
   ├─ /subreddits                add/remove what the hourly scraper pulls
   │                            from -- writes through to the `subreddits`
   │                            DB table, not the hardcoded seed dict
-  ├─ /youtube-hashtags          add/remove YouTube hashtag/keyword search
+  ├─ /tiktok-hashtags           add/remove TikTok hashtag/keyword search
   │                            terms per category -- same pattern as
   │                            /subreddits, its own DB table
   ├─ /stats                    read-only /triage keep/reject approval
-  │                            rates -- Reddit per subreddit, YouTube and
-  │                            Vimeo each as one source-wide line
+  │                            rates -- Reddit per subreddit, TikTok and
+  │                            Instagram each as one source-wide line
   └─ /youtube/authorize        OAuth flow for youtube_upload/upload.py
 
 library.py + library/         manually-curated assets you drop in yourself
@@ -116,29 +116,29 @@ doesn't verify it exists on Reddit -- a typo just yields nothing from
 that source, same as any other empty listing; removing one only stops
 future pulls, past clips from it are untouched. The six categories
 themselves are **not** editable this way (deliberately) -- they're wired
-into the reaction-library folder structure, the YouTube/Vimeo query
+into the reaction-library folder structure, the TikTok/Instagram query
 rotation, and the dashboard's grouping, so a new one would need matching
 changes in several other places to actually work end to end.
 
 Each subreddit's hot+rising listings are classified per-post into
 **video**, **image**, or **gif** (reddit galleries are skipped -- not
-handled). YouTube and Vimeo only ever contribute video candidates. Video
+handled). TikTok and Instagram only ever contribute video candidates. Video
 and image/gif are ranked on **separate velocity scales** and never
 compared against each other -- see `scraper/rank.py`.
 
-YouTube and Vimeo each contribute video candidates too (see module
-docstrings in `scraper/youtube_source.py` / `vimeo_source.py`), rotated
+TikTok and Instagram each contribute video candidates too (see module
+docstrings in `scraper/tiktok_source.py` / `instagram_source.py`), rotated
 by hour of day across the same six categories so each hourly run stays
-one Bright Data collection call per source. YouTube's rotated leg is also
+one Bright Data collection call per source. TikTok's rotated leg is also
 fed that category's curated hashtags/keywords (see the next section) in
 the same collection call.
 
-## YouTube hashtags
+## TikTok hashtags
 
-`scraper/youtube_hashtags.py` mirrors `scraper/subreddits.py`'s pattern
+`scraper/tiktok_hashtags.py` mirrors `scraper/subreddits.py`'s pattern
 for an extra, editable set of hashtag/keyword search terms per category,
-mixed into `youtube_source.py`'s hour-rotated search leg alongside its
-built-in query. **The `/youtube-hashtags` dashboard page is the actual
+mixed into `tiktok_source.py`'s hour-rotated search leg alongside its
+built-in query. **The `/tiktok-hashtags` dashboard page is the actual
 way to add or remove them** -- same DB-table-is-the-source-of-truth
 pattern as `/subreddits`.
 
@@ -146,11 +146,11 @@ pattern as `/subreddits`.
 
 `/stats` is a read-only view over every `/triage` keep/reject decision,
 tracked separately per source: Reddit broken out by individual
-subreddit, YouTube and Vimeo each as one source-wide line, sorted
+subreddit, TikTok and Instagram each as one source-wide line, sorted
 weakest-approval-rate-first within each grouping. It's purely additive
 reporting -- nothing about the triage flow itself changes. Dropping a
 consistently-rejected subreddit is still a manual edit on `/subreddits`
-(same for a weak hashtag on `/youtube-hashtags`); there's no automatic
+(same for a weak hashtag on `/tiktok-hashtags`); there's no automatic
 pruning. Stats recorded before this feature existed were backfilled for
 kept clips only -- a `/triage` rejection permanently deletes the row, so
 historical rejects aren't recoverable and only count from whenever this
@@ -158,7 +158,7 @@ feature was first deployed.
 
 ## "Most trending" ranking
 
-Reddit upvotes, YouTube views and Vimeo plays aren't comparable numbers,
+Reddit upvotes, TikTok views and Instagram plays aren't comparable numbers,
 so everything is ranked by **velocity** -- `score / hours_since_posted`
 -- in `scraper/rank.py`. This is a simple, tunable heuristic, not a
 scientifically "correct" cross-platform trending score; adjust it there
@@ -224,7 +224,7 @@ through `/triage` like anything else.
 
 `/review` also has a "paste a URL" form (a plain input + a category
 picker, since there's no subreddit to infer one from) for pulling in a
-video from basically anywhere -- not just Reddit/YouTube/Vimeo. It's a
+video from basically anywhere -- not just Reddit/TikTok/Instagram. It's a
 manual, on-demand path, not a new scraper category: nothing about it runs
 on a schedule, and nothing in `scraper/` (run_hourly.py, snapshot.py, the
 source modules) knows it exists.
@@ -234,7 +234,7 @@ source modules) knows it exists.
   outside `MIN_CLIP_DURATION_SEC`/`MAX_CLIP_DURATION_SEC` fails fast with
   a clear, specific message -- never a stack trace, never a wedged
   pipeline. yt-dlp itself is what gives this "virtually any site" reach:
-  it supports thousands of extractors beyond YouTube/Vimeo out of the
+  it supports thousands of extractors beyond TikTok/Instagram out of the
   box.
 - A successful probe reuses `scraper/downloader.py`'s existing
   `download_and_store()` for the real download/compress/thumbnail --
@@ -282,8 +282,8 @@ up.
   Then, under Bright Data's Scraper APIs (Web Scraper IDE / Datasets),
   set up one collector per source and grab its dataset id:
   - Reddit Scraper API -> `BRIGHTDATA_REDDIT_DATASET_ID`
-  - YouTube Scraper API -> `BRIGHTDATA_YOUTUBE_DATASET_ID`
-  - Vimeo Scraper API -> `BRIGHTDATA_VIMEO_DATASET_ID`
+  - TikTok Scraper API -> `BRIGHTDATA_TIKTOK_DATASET_ID`
+  - Instagram Scraper API -> `BRIGHTDATA_INSTAGRAM_DATASET_ID`
 
   Each is billed/rate-limited separately by Bright Data even though auth
   is unified -- check your Bright Data plan for per-dataset pricing and

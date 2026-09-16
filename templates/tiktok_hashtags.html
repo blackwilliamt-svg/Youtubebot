@@ -1,15 +1,15 @@
 {% extends "base.html" %}
-{% block title %}YouTube Hashtags{% endblock %}
+{% block title %}TikTok Hashtags{% endblock %}
 {% block content %}
-<h1>YouTube hashtags / keywords</h1>
+<h1>TikTok hashtags / keywords</h1>
 <p class="hint">
-  Extra hashtag/keyword search terms fed to the YouTube Bright Data source alongside each
+  Extra hashtag/keyword search terms fed to the TikTok Bright Data source alongside each
   category's built-in query. Adding one here doesn't verify it returns anything -- a bad tag just
   yields nothing from that search, nothing breaks. Removing one only stops future pulls; clips
   already collected from it are untouched.
 </p>
 
-<form method="post" action="{{ url_for('youtube_hashtags_add') }}" class="add-subreddit-form">
+<form method="post" action="{{ url_for('tiktok_hashtags_add') }}" class="add-subreddit-form">
   <input type="text" name="hashtag" placeholder="#hashtag or keyword" required>
   <select name="category" required>
     <option value="" disabled selected>Category…</option>
@@ -28,7 +28,7 @@
         {% for h in tags %}
           <div class="subreddit-row">
             <span>{{ h.hashtag }}</span>
-            <form method="post" action="{{ url_for('youtube_hashtags_remove', tag=h.hashtag) }}"
+            <form method="post" action="{{ url_for('tiktok_hashtags_remove', tag=h.hashtag) }}"
                   onsubmit="return confirm('Remove {{ h.hashtag }}? Future scrapes will stop using it.');">
               <button type="submit" class="btn-remove">Remove</button>
             </form>

@@ -4,13 +4,13 @@
 <h1>Triage approval stats</h1>
 <p class="hint">
   Read-only reporting from the /triage keep/reject pass, broken out per source -- Reddit by
-  individual subreddit, YouTube and Vimeo each as one source-wide line. Weakest approval rate
+  individual subreddit, TikTok and Instagram each as one source-wide line. Weakest approval rate
   first within each grouping. Rejected clips from before this page existed couldn't be recovered
   (a rejection permanently deletes the row) -- only keeps were backfilled, so rates for
   long-tracked subreddits may look better than reality until enough new data accumulates. Drop a
   weak subreddit from the <a href="{{ url_for('subreddits') }}">Subreddits</a> page directly;
-  there's no equivalent list to prune for YouTube/Vimeo unless you're using
-  <a href="{{ url_for('youtube_hashtags') }}">YouTube Hashtags</a>, which can be pruned the same way.
+  there's no equivalent list to prune for TikTok/Instagram unless you're using
+  <a href="{{ url_for('tiktok_hashtags') }}">TikTok Hashtags</a>, which can be pruned the same way.
 </p>
 
 <section class="category-block">
@@ -38,44 +38,44 @@
 </section>
 
 <section class="category-block">
-  <h2>YouTube</h2>
-  {% if youtube_stats %}
+  <h2>TikTok</h2>
+  {% if tiktok_stats %}
     <table class="stats-table">
       <thead>
         <tr><th>Total</th><th>Keeps</th><th>Rejects</th><th>Approval rate</th></tr>
       </thead>
       <tbody>
         <tr>
-          <td>{{ youtube_stats.total }}</td>
-          <td>{{ youtube_stats.keeps }}</td>
-          <td>{{ youtube_stats.rejects }}</td>
-          <td>{{ "%.0f%%"|format(youtube_stats.approval_rate * 100) if youtube_stats.approval_rate is not none else "—" }}</td>
+          <td>{{ tiktok_stats.total }}</td>
+          <td>{{ tiktok_stats.keeps }}</td>
+          <td>{{ tiktok_stats.rejects }}</td>
+          <td>{{ "%.0f%%"|format(tiktok_stats.approval_rate * 100) if tiktok_stats.approval_rate is not none else "—" }}</td>
         </tr>
       </tbody>
     </table>
   {% else %}
-    <p class="empty">No YouTube triage activity recorded yet.</p>
+    <p class="empty">No TikTok triage activity recorded yet.</p>
   {% endif %}
 </section>
 
 <section class="category-block">
-  <h2>Vimeo</h2>
-  {% if vimeo_stats %}
+  <h2>Instagram</h2>
+  {% if instagram_stats %}
     <table class="stats-table">
       <thead>
         <tr><th>Total</th><th>Keeps</th><th>Rejects</th><th>Approval rate</th></tr>
       </thead>
       <tbody>
         <tr>
-          <td>{{ vimeo_stats.total }}</td>
-          <td>{{ vimeo_stats.keeps }}</td>
-          <td>{{ vimeo_stats.rejects }}</td>
-          <td>{{ "%.0f%%"|format(vimeo_stats.approval_rate * 100) if vimeo_stats.approval_rate is not none else "—" }}</td>
+          <td>{{ instagram_stats.total }}</td>
+          <td>{{ instagram_stats.keeps }}</td>
+          <td>{{ instagram_stats.rejects }}</td>
+          <td>{{ "%.0f%%"|format(instagram_stats.approval_rate * 100) if instagram_stats.approval_rate is not none else "—" }}</td>
         </tr>
       </tbody>
     </table>
   {% else %}
-    <p class="empty">No Vimeo triage activity recorded yet.</p>
+    <p class="empty">No Instagram triage activity recorded yet.</p>
   {% endif %}
 </section>
 {% endblock %}

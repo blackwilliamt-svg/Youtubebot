@@ -96,20 +96,35 @@ def _first_list_url(row: dict, *keys):
     return None
 
 
+def _crosspost_parent(row: dict) -> dict:
+    """Crossposted rows carry Reddit's own crosspost_parent_list -- the wrapper
+    (crossposting) row often has its own title/caption but no media of its own,
+    since a crosspost doesn't re-host anything; the actual clip lives on the
+    original post. Returns the parent dict if present, else {}."""
+    parents = row.get("crosspost_parent_list")
+    if isinstance(parents, list) and parents and isinstance(parents[0], dict):
+        return parents[0]
+    return {}
+
+
 def _classify_row(row: dict, post_url: str):
-    """Returns ('video'|'image'|'gif', media_url) or (None, None) for a post shape we don't handle."""
+    """Returns ('video'|'image'|'gif', media_url) or (None, None) for a post shape we don't handle.
+    Falls back to the crosspost parent's media when the wrapper row itself has none."""
     if row.get("is_gallery"):
         return None, None  # multi-image galleries -- not handled, keep it simple
 
-    video_list_url = _first_list_url(row, "videos")
+    parent = _crosspost_parent(row)
+    video_list_url = _first_list_url(row, "videos") or _first_list_url(parent, "videos")
     video_url = _first(row, "video_url", "video") or video_list_url
-    is_video = bool(row.get("is_video")) or bool(video_url) or _first(row, "post_type") == "video"
+    is_video = (bool(row.get("is_video")) or bool(parent.get("is_video")) or bool(video_url)
+                or _first(row, "post_type") == "video")
     url = (post_url or "").lower()
     if is_video or any(domain in url for domain in VIDEO_DOMAINS) or url.endswith((".mp4", ".gifv", ".webm")):
         return "video", video_url or post_url
     if url.endswith(".gif"):
         return "gif", post_url
-    image_url = _first_image_url(row) or _first_list_url(row, "photos", "images")
+    image_url = (_first_image_url(row) or _first_list_url(row, "photos", "images")
+                 or _first_image_url(parent) or _first_list_url(parent, "photos", "images"))
     if image_url or url.endswith(IMAGE_EXTS):
         return "image", image_url or post_url
     return None, None
@@ -121,6 +136,16 @@ def _duration_hint(row: dict):
         return float(duration) if duration is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _uses_parent_media(row: dict, parent: dict) -> bool:
+    """True if the wrapper row itself carries no media and we'd only get a
+    video/image out of this post by falling back to the crosspost parent."""
+    if not parent:
+        return False
+    own_video = _first(row, "video_url", "video") or _first_list_url(row, "videos")
+    own_image = _first_image_url(row) or _first_list_url(row, "photos", "images")
+    return not (own_video or own_image or row.get("is_video"))
 
 
 def _candidate_from_row(row: dict, subreddit_name: str) -> Candidate | None:
@@ -144,6 +169,24 @@ def _candidate_from_row(row: dict, subreddit_name: str) -> Candidate | None:
         duration = _duration_hint(row)
         if duration and not (config.MIN_CLIP_DURATION_SEC <= duration <= config.MAX_CLIP_DURATION_SEC):
             return None
+        # v.redd.it serves video and audio as separate DASH streams. The direct
+        # CDN url in row["videos"]/video_url points at the video-only track, so
+        # downloading it straight gives a silent clip. yt-dlp's own reddit
+        # extractor knows to fetch and mux the matching audio track, but only
+        # when it's given the post permalink, not the raw fallback video url --
+        # so for v.redd.it specifically we hand it the permalink instead.
+        if media_url and "v.redd.it" in str(media_url).lower():
+            media_url = permalink
+
+    parent = _crosspost_parent(row)
+    # If this post is a crosspost and the wrapper carries no media of its own,
+    # the clip we're actually downloading is the ORIGINAL post's content, so
+    # its title should describe that content -- not the crossposter's caption,
+    # which is often unrelated commentary rather than a description of the clip.
+    if _uses_parent_media(row, parent):
+        title = _first(parent, "title", default="") or _first(row, "title", default="")
+    else:
+        title = _first(row, "title", default="")
 
     category = category_for_subreddit(subreddit_name)
     return Candidate(
@@ -153,7 +196,7 @@ def _candidate_from_row(row: dict, subreddit_name: str) -> Candidate | None:
         media_url=media_url or permalink,
         media_type=media_type,
         category=category,
-        title=_first(row, "title", default=""),
+        title=title,
         author=str(_first(row, "author", "username", default="")),
         subreddit=subreddit_name,
         score=_to_float(_first(row, "num_upvotes", "score", "upvotes", default=0)),

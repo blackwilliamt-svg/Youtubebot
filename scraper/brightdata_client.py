@@ -1,6 +1,6 @@
 """
 Shared client for Bright Data's Dataset (scraper) APIs -- used by
-reddit_source.py, youtube_source.py and vimeo_source.py instead of each
+reddit_source.py, tiktok_source.py and instagram_source.py instead of each
 source's old bespoke API integration.
 
 All three "Scraper API" products (Reddit, YouTube, Vimeo) front the same

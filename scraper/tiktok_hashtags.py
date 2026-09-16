@@ -1,17 +1,17 @@
 """
-Curated list of YouTube hashtag/keyword search terms, mapped to one of the
-six fixed output categories -- same role for the YouTube Bright Data
-source that scraper/subreddits.py plays for Reddit, and editable the same
-way (a dashboard page backed by a DB table, not a code change).
+Curated list of TikTok hashtag/keyword search terms, mapped to one of the
+six fixed output categories -- same role for the TikTok Bright Data source
+that scraper/subreddits.py plays for Reddit, and editable the same way (a
+dashboard page backed by a DB table, not a code change).
 
-db.py's `youtube_hashtags` table is the live source of truth every scrape
+db.py's `tiktok_hashtags` table is the live source of truth every scrape
 run actually reads (add_hashtag()/remove_hashtag() below just write
 through to it). DEFAULT_HASHTAG_CATEGORY is only the one-time seed used
 the first time that table is empty -- editing this dict later has no
 effect on an existing install; use the dashboard (or add_hashtag/
 remove_hashtag directly) instead.
 
-These are used *in addition to* youtube_source.py's SEARCH_QUERIES, not
+These are used *in addition to* tiktok_source.py's SEARCH_QUERIES, not
 instead of them -- both feed the hour-rotated per-category search leg.
 """
 import db
@@ -44,7 +44,7 @@ def list_all_hashtags() -> list[str]:
 
 def all_hashtags_with_categories() -> list[dict]:
     """[{hashtag, category, added_at}], grouped by category then hashtag --
-    for the dashboard's /youtube-hashtags page."""
+    for the dashboard's /tiktok-hashtags page."""
     _ensure_seeded()
     return db.list_hashtags_full()
 
