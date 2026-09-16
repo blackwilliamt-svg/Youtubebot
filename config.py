@@ -73,6 +73,10 @@ MUSIC_DUCK_VOLUME = float(os.environ.get("MUSIC_DUCK_VOLUME", "0.25"))  # backgr
 MAX_IMAGE_DOWNLOAD_BYTES = int(os.environ.get("MAX_IMAGE_DOWNLOAD_BYTES", str(20 * 1024 * 1024)))
 MAX_GIF_DOWNLOAD_BYTES = int(os.environ.get("MAX_GIF_DOWNLOAD_BYTES", str(40 * 1024 * 1024)))
 
+# --- manual uploads (your own footage, and thumbnail images) --------------
+MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", str(500 * 1024 * 1024)))  # dashboard file-picker cap
+MAX_THUMBNAIL_BYTES = int(os.environ.get("MAX_THUMBNAIL_BYTES", str(2 * 1024 * 1024)))  # YouTube's own thumbnail cap
+
 # --- manual test snapshot --------------------------------------------------
 SNAPSHOT_CATEGORY_DELAY_SEC = float(os.environ.get("SNAPSHOT_CATEGORY_DELAY_SEC", "5"))
 

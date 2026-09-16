@@ -29,6 +29,18 @@
   <button type="submit">Import</button>
 </form>
 
+<form method="post" action="{{ url_for('import_file_run') }}" class="import-url-form" enctype="multipart/form-data">
+  <input type="file" name="video" accept="video/*" required>
+  <input type="text" name="title" placeholder="Title (optional)">
+  <select name="category" required>
+    <option value="" disabled selected>Category…</option>
+    {% for cat in by_category.keys() %}
+      <option value="{{ cat }}">{{ cat }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Upload your own footage</button>
+</form>
+
 <form method="get" action="{{ url_for('build_screen') }}" id="build-form">
   <input type="hidden" name="date" value="{{ date_str }}">
   {% for category, clips in by_category.items() %}
@@ -54,7 +66,13 @@
                 {{ c.source }}{% if c.subreddit %} · r/{{ c.subreddit }}{% endif %}
                 {% if c.media_type == 'video' %} · {{ '%.0f'|format(c.duration_sec or 0) }}s{% endif %}
               </div>
-              <a href="{{ c.source_url }}" target="_blank" rel="noopener">source ↗</a>
+              {% if c.source_url %}<a href="{{ c.source_url }}" target="_blank" rel="noopener">source ↗</a>{% endif %}
+              <button type="submit" class="btn-remove"
+                      formaction="{{ url_for('review_delete', clip_id=c.id) }}" formmethod="post"
+                      formnovalidate
+                      onclick="return confirm('Delete this clip permanently? This can\'t be undone.');">
+                Delete
+              </button>
             </div>
           </label>
         {% endfor %}

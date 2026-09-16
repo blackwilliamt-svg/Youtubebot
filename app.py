@@ -13,13 +13,16 @@ the browser can poll instead of holding a request open.
 """
 import functools
 import logging
+import tempfile
 import threading
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import (Flask, abort, flash, jsonify, redirect, render_template,
                     request, send_from_directory, session, url_for)
 from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.utils import secure_filename
 
 import account_settings
 import api_settings
@@ -28,6 +31,7 @@ import db
 import library
 from compiler.build import BuildError, build_compilation
 from manual_import import ManualImportError, import_url
+from manual_upload import ManualUploadError, import_file
 from scraper.snapshot import run_test_snapshot
 from scraper import subreddits as subreddits_module
 from scraper import tiktok_hashtags as hashtags_module
@@ -42,6 +46,7 @@ logging.basicConfig(
 log = logging.getLogger("meme_pipeline.app")
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = config.MAX_UPLOAD_BYTES
 if not config.FLASK_SECRET_KEY:
     log.warning("FLASK_SECRET_KEY not set in .env -- using an insecure dev fallback; sessions won't survive a restart.")
 app.secret_key = config.FLASK_SECRET_KEY or "dev-only-insecure-key-set-FLASK_SECRET_KEY"
@@ -135,6 +140,19 @@ def review():
     )
 
 
+@app.route("/review/<int:clip_id>/delete", methods=["POST"])
+@login_required
+def review_delete(clip_id):
+    """Permanently deletes an already-kept clip -- for when the wrong thing
+    got approved in /triage. No undo, same as /triage's reject."""
+    clip = _delete_clip_and_files(clip_id, "Review")
+    if clip:
+        flash(f"Deleted \"{clip.get('title') or '(untitled)'}\".", "success")
+    else:
+        flash("That clip was already gone.", "error")
+    return redirect(url_for("review", date=request.form.get("date") or None))
+
+
 # --- triage (first-pass accept/reject, one item at a time) -----------------
 
 @app.route("/triage")
@@ -158,19 +176,28 @@ def triage_keep(clip_id):
     return redirect(url_for("triage", date=request.form.get("date") or None))
 
 
-@app.route("/triage/<int:clip_id>/reject", methods=["POST"])
-@login_required
-def triage_reject(clip_id):
+def _delete_clip_and_files(clip_id: int, log_label: str) -> dict | None:
+    """Deletes a clip's DB row and its on-disk file/thumbnail/JSON sidecar
+    (permanently -- no undo). Returns the deleted clip dict, or None if it
+    didn't exist. Shared by /triage's reject and /review's delete."""
     clip = db.delete_clip(clip_id)
     if clip:
-        db.record_triage_reject(clip["source"], clip.get("subreddit"))
         for key in ("file_path", "thumb_path"):
             p = clip.get(key)
             if p:
                 Path(p).unlink(missing_ok=True)
         if clip.get("file_path"):
             Path(clip["file_path"]).with_suffix(".json").unlink(missing_ok=True)
-        log.info("Triage: deleted clip id=%d (%s)", clip_id, clip.get("title", ""))
+        log.info("%s: deleted clip id=%d (%s)", log_label, clip_id, clip.get("title", ""))
+    return clip
+
+
+@app.route("/triage/<int:clip_id>/reject", methods=["POST"])
+@login_required
+def triage_reject(clip_id):
+    clip = _delete_clip_and_files(clip_id, "Triage")
+    if clip:
+        db.record_triage_reject(clip["source"], clip.get("subreddit"))
     return redirect(url_for("triage", date=request.form.get("date") or None))
 
 
@@ -333,6 +360,56 @@ def import_url_run():
         except Exception:
             log.exception("Unexpected error importing %s", url)
             db.update_job(job_id, status="error", message="Unexpected error, check server logs")
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return redirect(url_for("job_status_page", job_id=job_id))
+
+
+# --- manual "upload your own footage" import ----------------------------
+# Additive, like /import/url above, but starts from a file the browser
+# uploads instead of a URL yt-dlp fetches -- see manual_upload.py's module
+# docstring. Lands triaged=1 (straight to /review, no /triage pass) since
+# it's footage you picked and uploaded on purpose.
+
+@app.route("/import/file", methods=["POST"])
+@login_required
+def import_file_run():
+    upload = request.files.get("video")
+    category = (request.form.get("category") or "").strip()
+    title = (request.form.get("title") or "").strip()
+
+    if not upload or not upload.filename:
+        flash("Choose a video file first.", "error")
+        return redirect(url_for("review"))
+    if category not in CATEGORIES:
+        flash("Pick a category for the upload.", "error")
+        return redirect(url_for("review"))
+
+    original_filename = secure_filename(upload.filename) or "upload"
+    suffix = Path(original_filename).suffix or ".mp4"
+    tmp_dir = Path(tempfile.mkdtemp(prefix="meme_upload_"))
+    tmp_path = tmp_dir / f"src{suffix}"
+    upload.save(tmp_path)
+
+    job_id = db.create_job("import")
+
+    def _worker():
+        db.update_job(job_id, status="running", message=f"Processing {original_filename} ...")
+        try:
+            clip_id = import_file(tmp_path, original_filename, category, title=title)
+            db.update_job(job_id, status="done", ref_id=clip_id,
+                           message="Uploaded -- check Review to add it to a build.")
+        except ManualUploadError as exc:
+            db.update_job(job_id, status="error", message=str(exc))
+        except Exception:
+            log.exception("Unexpected error importing uploaded file %s", original_filename)
+            db.update_job(job_id, status="error", message="Unexpected error, check server logs")
+        finally:
+            tmp_path.unlink(missing_ok=True)
+            try:
+                tmp_dir.rmdir()
+            except OSError:
+                pass  # not empty / already gone -- fine, it's a scratch dir
 
     threading.Thread(target=_worker, daemon=True).start()
     return redirect(url_for("job_status_page", job_id=job_id))
@@ -525,6 +602,9 @@ def compilations():
     )
 
 
+_THUMBNAIL_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+
+
 @app.route("/compilations/<int:compilation_id>/upload", methods=["POST"])
 @login_required
 def upload_compilation(compilation_id):
@@ -535,24 +615,61 @@ def upload_compilation(compilation_id):
     title = request.form.get("title") or f"Meme Compilation {comp['created_at'][:10]}"
     description = request.form.get("description", "")
     privacy = request.form.get("privacy_status", "private")
+
+    # Optional custom thumbnail -- save it to a temp file now (while the
+    # request's file storage is still alive) so the background thread has
+    # a plain path to hand to MediaFileUpload; cleaned up after the upload
+    # job finishes either way.
+    thumbnail_path = None
+    thumb_upload = request.files.get("thumbnail")
+    if thumb_upload and thumb_upload.filename:
+        ext = Path(secure_filename(thumb_upload.filename)).suffix.lower()
+        if ext not in _THUMBNAIL_EXTENSIONS:
+            flash(f"Thumbnail must be a jpg or png (got {ext or 'no extension'}) -- uploading video without it.", "error")
+        else:
+            tmp_dir = Path(tempfile.mkdtemp(prefix="meme_thumb_"))
+            thumbnail_path = tmp_dir / f"thumb{ext}"
+            thumb_upload.save(thumbnail_path)
+            if thumbnail_path.stat().st_size > config.MAX_THUMBNAIL_BYTES:
+                flash(
+                    f"Thumbnail is over YouTube's {config.MAX_THUMBNAIL_BYTES // (1024*1024)}MB limit -- "
+                    "uploading video without it.", "error",
+                )
+                thumbnail_path.unlink(missing_ok=True)
+                tmp_dir.rmdir()
+                thumbnail_path = None
+
     job_id = db.create_job("upload", ref_id=compilation_id)
 
     def _worker():
         db.update_job(job_id, status="running", message="Uploading to YouTube...")
         try:
-            result = upload_video(comp["output_path"], title, description, privacy_status=privacy)
+            result = upload_video(
+                comp["output_path"], title, description,
+                privacy_status=privacy, thumbnail_path=str(thumbnail_path) if thumbnail_path else None,
+            )
             db.update_compilation(
                 compilation_id,
                 youtube_video_id=result["video_id"],
                 youtube_url=result["url"],
                 uploaded_at=db.utcnow_iso(),
             )
-            db.update_job(job_id, status="done", message=f"Uploaded: {result['url']}")
+            message = f"Uploaded: {result['url']}"
+            if result.get("thumbnail_warning"):
+                message += " (uploaded, but the custom thumbnail failed to set -- see server logs)"
+            db.update_job(job_id, status="done", message=message)
         except UploadError as exc:
             db.update_job(job_id, status="error", message=str(exc))
         except Exception:
             log.exception("Unexpected error in upload job %d", job_id)
             db.update_job(job_id, status="error", message="Unexpected error, check server logs")
+        finally:
+            if thumbnail_path:
+                thumbnail_path.unlink(missing_ok=True)
+                try:
+                    thumbnail_path.parent.rmdir()
+                except OSError:
+                    pass
 
     threading.Thread(target=_worker, daemon=True).start()
     return redirect(url_for("job_status_page", job_id=job_id))

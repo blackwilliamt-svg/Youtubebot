@@ -103,6 +103,7 @@ button:hover { filter: brightness(1.1); }
 .clip-title { font-weight: 600; margin-bottom: 0.2rem; }
 .clip-sub { color: var(--muted); }
 .clip-meta a { color: var(--accent); font-size: 0.75rem; }
+.clip-meta .btn-remove { display: block; margin-top: 0.5rem; width: 100%; }
 .media-type-badge {
   position: absolute;
   top: 0.5rem; right: 0.5rem;
@@ -163,6 +164,10 @@ button:hover { filter: brightness(1.1); }
 }
 .import-url-form input[type=url] { flex: 1; min-width: 200px; }
 .import-url-form select { width: auto; min-width: 140px; }
+.import-url-form input[type=file] { flex: 1; min-width: 200px; }
+.import-url-form input[type=text] { width: auto; min-width: 140px; }
+
+.thumbnail-picker { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.8rem; color: var(--muted); }
 
 .add-subreddit-form {
   display: flex; gap: 0.6rem; align-items: center;

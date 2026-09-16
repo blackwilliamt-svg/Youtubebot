@@ -33,9 +33,13 @@
         {% if c.youtube_url %}
           <p>Uploaded: <a href="{{ c.youtube_url }}" target="_blank" rel="noopener">{{ c.youtube_url }}</a></p>
         {% elif youtube_connected %}
-          <form method="post" action="{{ url_for('upload_compilation', compilation_id=c.id) }}" class="upload-form">
+          <form method="post" action="{{ url_for('upload_compilation', compilation_id=c.id) }}" class="upload-form" enctype="multipart/form-data">
             <input type="text" name="title" placeholder="Video title" required>
             <textarea name="description" placeholder="Description (optional)"></textarea>
+            <label class="thumbnail-picker">
+              Thumbnail (optional, jpg/png)
+              <input type="file" name="thumbnail" accept="image/jpeg,image/png">
+            </label>
             <select name="privacy_status">
               <option value="private" selected>Private</option>
               <option value="unlisted">Unlisted</option>

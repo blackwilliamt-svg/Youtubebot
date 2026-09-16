@@ -227,3 +227,11 @@ def download_and_store(candidate: Candidate) -> dict:
         "fetched_at": retrieval_ts,
         **stored,
     }
+
+
+# Re-exported (unprefixed) for other in-repo modules -- currently
+# manual_upload.py -- that need the same compress/thumbnail/probe
+# primitives without going through the yt-dlp/HTTP download paths above.
+compress_video = _compress_video
+make_thumbnail = _make_thumbnail
+probe_duration = _probe_duration

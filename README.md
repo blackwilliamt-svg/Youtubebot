@@ -199,13 +199,21 @@ publishable to GitHub).
    delete. Auto-advances to the next untriaged item either way, so a
    day's haul (~48 items) goes fast.
 2. **`/review`** -- kept items only, grouped by category, browse and
-   check the ones you want, then "Continue to build".
+   check the ones you want, then "Continue to build". Each card also has
+   a **Delete** button for undoing an accidental Keep from `/triage` --
+   same permanent file+DB deletion as `/triage`'s reject, just reachable
+   after the fact instead of only in the moment.
 3. **`/build`** -- add checked items (pre-seeded from `/review`), more
    clips, and/or reaction-library clips; use ▲▼ to arrange the exact
    order (reaction clips are only ever inserted here, manually); submit
    to kick off the ffmpeg build on a background thread.
-4. **`/compilations`** -- preview the finished MP4, upload to YouTube
-   (defaults to private).
+4. **`/compilations`** -- preview the finished MP4, optionally attach a
+   custom thumbnail (jpg/png, YouTube's 2MB cap enforced client-side
+   before upload), and upload to YouTube (defaults to private). If
+   setting the thumbnail fails after the video itself uploads
+   successfully (YouTube requires a verified channel for custom
+   thumbnails), the video upload still counts as a success -- the job's
+   status message just notes the thumbnail didn't take.
 
 ## Manual test snapshot
 
@@ -219,6 +227,29 @@ the exact same ranking, 24h dedup, and per-source rate-limit
 backoff/retry as the hourly job, it just doesn't wait for the clock.
 Results land in the normal `media/YYYY-MM-DD/<category>/` folder and go
 through `/triage` like anything else.
+
+## Manual "upload your own footage" import
+
+`/review` also has a file-picker form (video file + category + optional
+title) for dropping in your own footage -- personal clips, b-roll,
+anything that isn't coming from a URL. Distinct from both the scraped
+pipeline and the "paste a URL" import below:
+
+- **`manual_upload.py`** skips the yt-dlp probe entirely (there's no URL
+  to probe) and goes straight to the same compress/thumbnail/store
+  primitives `scraper/downloader.py` uses for a scraped video
+  (`compress_video`/`make_thumbnail`/`probe_duration`, re-exported from
+  that module for reuse) -- same `media/YYYY-MM-DD/<category>/` layout
+  and JSON sidecar as everything else, stored under `source="upload"`.
+- **Lands triaged already** (skips `/triage`) -- it's footage you chose
+  and uploaded on purpose, so it shows up directly in `/review`, ready to
+  check and send to `/build`.
+- Runs as a background job (`/jobs/<id>` polling, same pattern as a build
+  or a YouTube upload) since compressing a video takes a moment. The
+  dashboard's file-picker cap is `MAX_UPLOAD_BYTES` (default 500MB).
+- Accepts mp4/mov/m4v/webm/mkv/avi; anything else, or a file ffmpeg/ffprobe
+  can't read as a video, fails the job with a clear message rather than a
+  stack trace.
 
 ## Manual "paste any video URL" import
 
