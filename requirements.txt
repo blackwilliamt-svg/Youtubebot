@@ -7,3 +7,8 @@ google-api-python-client>=2.140,<3
 google-auth>=2.32,<3
 google-auth-oauthlib>=1.2,<2
 Werkzeug>=3.0,<4
+
+# --- analyzer (freeform vision+audio tagging, see analyzer/) ---------------
+opencv-python-headless>=4.9,<5   # motion-based frame sampling (analyzer/frame_sampler.py)
+faster-whisper>=1.0,<2           # speech transcription, CPU int8 (analyzer/audio.py)
+numpy>=1.26,<3                   # opencv/faster-whisper dependency, pinned explicitly here too

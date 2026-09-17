@@ -15,7 +15,10 @@ class Candidate:
     title: str = ""
     author: str = ""
     subreddit: Optional[str] = None
-    score: float = 0.0                 # raw engagement (upvotes/views/plays)
+    score: float = 0.0                 # raw engagement (upvotes/views/plays) -- drives the velocity/trending score
+    likes: float = 0.0                 # raw likes/upvotes -- separate from `score` for composite engagement scoring
+    comments: float = 0.0              # raw comment count, when the source dataset exposes one
+    shares: float = 0.0                # raw share count, when the source dataset exposes one
     published_at: Optional[datetime] = None
     trending_score: float = field(default=0.0, init=False)
 

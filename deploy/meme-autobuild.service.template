@@ -1,0 +1,14 @@
+[Unit]
+Description=meme-pipeline periodic auto-compile pass (trust-dial gated -- see autonomy.py)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=__APP_USER__
+WorkingDirectory=__APP_DIR__
+EnvironmentFile=__APP_DIR__/.env
+ExecStart=__APP_DIR__/.venv/bin/python -m scraper.run_autobuild
+# Guardrails for a 2GB box -- ffmpeg concat + (if 'autonomous') a build shouldn't take the droplet down.
+MemoryMax=1400M
+TimeoutStartSec=1500

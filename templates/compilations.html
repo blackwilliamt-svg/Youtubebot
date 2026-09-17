@@ -3,6 +3,13 @@
 {% block content %}
 <h1>Compilations</h1>
 
+<div class="notice">
+  <form method="post" action="{{ url_for('compilations_auto_build') }}" style="display:inline">
+    <button type="submit">Auto-build now (straight cuts, top engagement-scored clips)</button>
+  </form>
+  <span class="hint">Same builder the autonomy dial (see <a href="{{ url_for('settings_page') }}">Settings</a>) can run on a schedule -- picks clips until it lands in a 60-90s window.</span>
+</div>
+
 {% if youtube_configured and not youtube_connected %}
   <div class="notice">
     YouTube isn't connected yet. <a href="{{ url_for('youtube_authorize') }}">Connect your YouTube account</a> to enable uploads.

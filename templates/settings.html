@@ -10,6 +10,25 @@
   password instead, see <a href="{{ url_for('account_page') }}">Account</a>.
 </p>
 
+<section class="category-block">
+  <h2>Clip-selection autonomy</h2>
+  <p class="hint">
+    How much freedom the pipeline has to pick clips into a compilation on its own. "Manual" (default)
+    means you always assemble one yourself from Build. "Assisted" tells you (in the server logs) once
+    enough top-ranked material exists for a 60-90s compilation, but still waits for you to build it.
+    "Autonomous" builds one automatically (straight cuts, never uploads) once enough exists. You can
+    always trigger the same builder by hand from the Compilations page regardless of this setting.
+  </p>
+  <form method="post" action="{{ url_for('settings_autonomy_save') }}" class="settings-save-form">
+    <select name="level">
+      {% for lvl in autonomy_levels %}
+        <option value="{{ lvl }}" {{ 'selected' if lvl == current_autonomy_level else '' }}>{{ lvl }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Save</button>
+  </form>
+</section>
+
 {% for group, fields in groups.items() %}
   <section class="category-block">
     <h2>{{ group }}</h2>

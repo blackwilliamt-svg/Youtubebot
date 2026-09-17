@@ -23,6 +23,9 @@
         {{ item.media_type }} · {{ item.source }}{% if item.subreddit %} · r/{{ item.subreddit }}{% endif %}
         · {{ item.category }}
       </div>
+      {% if item.tag_list %}
+        <div class="clip-tags">{% for tag in item.tag_list %}<span class="tag">{{ tag }}</span>{% endfor %}</div>
+      {% endif %}
       <a href="{{ item.source_url }}" target="_blank" rel="noopener">source ↗</a>
     </div>
 

@@ -8,9 +8,9 @@
   first within each grouping. Rejected clips from before this page existed couldn't be recovered
   (a rejection permanently deletes the row) -- only keeps were backfilled, so rates for
   long-tracked subreddits may look better than reality until enough new data accumulates. Drop a
-  weak subreddit from the <a href="{{ url_for('subreddits') }}">Subreddits</a> page directly;
-  there's no equivalent list to prune for TikTok/Instagram unless you're using
-  <a href="{{ url_for('tiktok_hashtags') }}">TikTok Hashtags</a>, which can be pruned the same way.
+  weak subreddit (or search term) from the <a href="{{ url_for('search_parameters') }}">Search Parameters</a>
+  page directly -- the adaptive system also does this automatically once a subreddit or tag crosses
+  the vote threshold in either direction.
 </p>
 
 <section class="category-block">

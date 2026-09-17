@@ -1,26 +1,31 @@
 """
-Curated list of trending meme/fail/video subreddits, mapped to one of the
-six fixed output categories used for the /media/YYYY-MM-DD/<category>/
-folder layout, the reaction-library folders, and the dashboard grouping.
+Preferred/origin Reddit subreddits -- an adaptive tracking dimension, not
+a scrape-source list any more (Reddit sourcing switched from subreddit-
+based to keyword-based; see scraper/reddit_source.py and
+scraper/search_terms.py, which now drives what Reddit/TikTok/Instagram
+actually search for). A subreddit lands here either by hand (dashboard's
+Search Parameters page) or automatically once it crosses
+config.ADAPTIVE_VOTE_THRESHOLD likes/dislikes in triage (scraper/adaptive.py).
 
-The list itself is editable from the dashboard's /subreddits page --
-db.py's `subreddits` table is the live source of truth every scrape run
-actually reads (add_subreddit()/remove_subreddit() below just write
-through to it). DEFAULT_SUBREDDIT_CATEGORY is only the one-time seed used
-the first time that table is empty (a fresh install, or someone starting
-from a blank DB) -- editing this dict later has no effect on an existing
-install; use the dashboard (or add_subreddit/remove_subreddit directly)
-instead.
+db.py's `subreddits` table is the live source of truth (add_subreddit()/
+remove_subreddit() below just write through to it). DEFAULT_SUBREDDIT_CATEGORY
+is only the one-time seed used the first time that table is empty --
+editing this dict later has no effect on an existing install.
 
 CATEGORIES, unlike the subreddit list, is intentionally NOT editable here:
 it's wired into the reaction-library folder structure (library.py), the
-YouTube/Vimeo source query rotation, and every by-category grouping in
-the dashboard, so an arbitrary new category name would need matching
-changes in several other places to actually work end to end.
+Reddit/TikTok/Instagram search-term rotation, and every by-category
+grouping in the dashboard, so an arbitrary new category name would need
+matching changes in several other places to actually work end to end.
+Revised to three open-ended buckets (funny/viral memes, fails, and
+political satire) -- animal/cute and gaming content is de-emphasized per
+the current content focus; within each bucket, the analyzer's freeform
+tags (analyzer/) carry the actual fine-grained classification instead of
+a fixed sub-list.
 """
 import db
 
-CATEGORIES = ["fails", "animals", "gaming", "wins", "oddly-satisfying", "mildly-infuriating"]
+CATEGORIES = ["funny-viral", "fails", "political-satire"]
 
 DEFAULT_SUBREDDIT_CATEGORY = {
     # --- fails / chaos ---------------------------------------------------
@@ -32,31 +37,20 @@ DEFAULT_SUBREDDIT_CATEGORY = {
     "ClumsyGirls": "fails",
     "Wellthatsucks": "fails",
     "therewasanattempt": "fails",
-    # --- animals ----------------------------------------------------------
-    "AnimalsBeingDerps": "animals",
-    "AnimalsBeingBros": "animals",
-    "AnimalsBeingJerks": "animals",
-    "Zoomies": "animals",
-    "aww": "animals",
-    "awwducational": "animals",
-    # --- gaming -------------------------------------------------------
-    "gaming": "gaming",
-    "GamePhysics": "gaming",
-    "gamingmemes": "gaming",
-    "outside": "gaming",  # IRL-as-a-game meme clips, consistently video-heavy
-    # --- wins ------------------------------------------------------------
-    "nextfuckinglevel": "wins",
-    "HumansBeingBros": "wins",
-    "MadeMeSmile": "wins",
-    "ContagiousLaughter": "wins",
-    "toptalent": "wins",
-    # --- oddly satisfying --------------------------------------------
-    "oddlysatisfying": "oddly-satisfying",
-    "perfectlycutscreams": "oddly-satisfying",
-    "BeAmazed": "oddly-satisfying",
-    "Damnthatsinteresting": "oddly-satisfying",
-    # --- mildly infuriating --------------------------------------------
-    "mildlyinfuriating": "mildly-infuriating",
+    # --- funny / viral / wholesome / satisfying ---------------------------
+    "nextfuckinglevel": "funny-viral",
+    "HumansBeingBros": "funny-viral",
+    "MadeMeSmile": "funny-viral",
+    "ContagiousLaughter": "funny-viral",
+    "toptalent": "funny-viral",
+    "oddlysatisfying": "funny-viral",
+    "perfectlycutscreams": "funny-viral",
+    "BeAmazed": "funny-viral",
+    "Damnthatsinteresting": "funny-viral",
+    "mildlyinfuriating": "funny-viral",
+    # --- political satire --------------------------------------------------
+    "PoliticalHumor": "political-satire",
+    "SatiricalPolitics": "political-satire",
 }
 
 

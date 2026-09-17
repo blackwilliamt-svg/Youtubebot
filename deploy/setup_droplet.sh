@@ -82,4 +82,26 @@ unused clips older than 14 days):
      deploy/meme-retention.service.template > /etc/systemd/system/meme-retention.service
    cp deploy/meme-retention.timer /etc/systemd/system/meme-retention.timer
    systemctl daemon-reload && systemctl enable --now meme-retention.timer
+
+Optional periodic auto-compile pass (compiler/auto_build.py -- only does
+anything once the clip-selection autonomy dial in /settings is 'assisted'
+or 'autonomous'; see autonomy.py):
+   sed "s#__APP_DIR__#$APP_DIR#g; s#__APP_USER__#$APP_USER#g" \\
+     deploy/meme-autobuild.service.template > /etc/systemd/system/meme-autobuild.service
+   cp deploy/meme-autobuild.timer /etc/systemd/system/meme-autobuild.timer
+   systemctl daemon-reload && systemctl enable --now meme-autobuild.timer
+
+REQUIRED for the freeform tagging analyzer (analyzer/) to produce any
+tags at all -- it calls a LOCAL vision model via Ollama, which this
+script does NOT install (a CPU-only vision model is a heavy, optional
+dependency; skip this if you don't want tagging/adaptive search params
+yet -- clips still download fine without it, just untagged):
+   curl -fsSL https://ollama.com/install.sh | sh
+   ollama pull \${OLLAMA_VISION_MODEL:-llava:7b}
+   # then set OLLAMA_HOST / OLLAMA_VISION_MODEL in .env if you're not
+   # using the defaults (http://127.0.0.1:11434 / llava:7b).
+   # NOTE: CPU-only inference on a small droplet is slow (can be tens of
+   # seconds per clip) -- if that backs up the hourly scrape, consider a
+   # bigger box or pointing OLLAMA_HOST at one, or swapping in a hosted
+   # vision API in analyzer/vision.py later.
 EOF

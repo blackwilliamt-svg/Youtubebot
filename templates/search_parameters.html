@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Search Parameters{% endblock %}
+{% block content %}
+<h1>Search parameters</h1>
+<p class="hint">
+  One unified list of search terms shared by all three platforms -- Reddit keyword search (sorted
+  "hot"), TikTok hashtag search, and Instagram hashtag search. Adding one here doesn't verify it
+  returns anything -- a bad term just yields nothing from that search, nothing breaks. Removing one
+  only stops future pulls; clips already collected from it are untouched. This list also grows and
+  shrinks itself: a tag crossing 3 liked (or disliked) clips in Triage gets added (or removed)
+  automatically -- see the Stats page for triage approval rates.
+</p>
+
+<form method="post" action="{{ url_for('search_parameters_add') }}" class="add-subreddit-form">
+  <input type="text" name="term" placeholder="search term, hashtag, or keyword" required>
+  <select name="category" required>
+    <option value="" disabled selected>Category…</option>
+    {% for cat in by_category.keys() %}
+      <option value="{{ cat }}">{{ cat }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Add</button>
+</form>
+
+{% for category, terms in by_category.items() %}
+  <section class="category-block">
+    <h2>{{ category }} <span class="count">({{ terms|length }})</span></h2>
+    {% if terms %}
+      <div class="subreddit-list">
+        {% for t in terms %}
+          <div class="subreddit-row">
+            <span>{{ t.term }}</span>
+            <form method="post" action="{{ url_for('search_parameters_remove', term=t.term) }}"
+                  onsubmit="return confirm('Remove {{ t.term }}? Future scrapes will stop using it.');">
+              <button type="submit" class="btn-remove">Remove</button>
+            </form>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="empty">No search terms in this category.</p>
+    {% endif %}
+  </section>
+{% endfor %}
+
+<h1>Preferred subreddits <span class="count">(adaptive)</span></h1>
+<p class="hint">
+  Reddit sourcing itself is keyword-based now (the list above), not subreddit-based -- this list is
+  just a separate adaptive dimension: a subreddit-of-origin that keeps showing up among liked (or
+  disliked) clips gets added (or removed) here automatically, same 3-vote threshold as tags above.
+  You can also manage it by hand.
+</p>
+
+<form method="post" action="{{ url_for('subreddits_add') }}" class="add-subreddit-form">
+  <input type="text" name="name" placeholder="subreddit name (no r/ needed)" required>
+  <select name="category" required>
+    <option value="" disabled selected>Category…</option>
+    {% for cat in subreddit_by_category.keys() %}
+      <option value="{{ cat }}">{{ cat }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Add</button>
+</form>
+
+{% for category, subs in subreddit_by_category.items() %}
+  <section class="category-block">
+    <h2>{{ category }} <span class="count">({{ subs|length }})</span></h2>
+    {% if subs %}
+      <div class="subreddit-list">
+        {% for s in subs %}
+          <div class="subreddit-row">
+            <a href="https://www.reddit.com/r/{{ s.name }}" target="_blank" rel="noopener">r/{{ s.name }}</a>
+            <form method="post" action="{{ url_for('subreddits_remove', name=s.name) }}"
+                  onsubmit="return confirm('Remove r/{{ s.name }} from the preferred list?');">
+              <button type="submit" class="btn-remove">Remove</button>
+            </form>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="empty">No subreddits in this category yet.</p>
+    {% endif %}
+  </section>
+{% endfor %}
+{% endblock %}

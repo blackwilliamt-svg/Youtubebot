@@ -4,6 +4,7 @@ single-box cron/Flask app doesn't need pooling); WAL mode lets the hourly
 scraper write while the dashboard reads without locking each other out.
 """
 import json
+import statistics
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -79,6 +80,30 @@ def _migrate():
             conn.execute("ALTER TABLE clips ADD COLUMN media_type TEXT NOT NULL DEFAULT 'video'")
         if "triaged" not in existing:
             conn.execute("ALTER TABLE clips ADD COLUMN triaged INTEGER NOT NULL DEFAULT 0")
+        for col, ddl in (
+            ("likes", "ALTER TABLE clips ADD COLUMN likes REAL"),
+            ("comments", "ALTER TABLE clips ADD COLUMN comments REAL"),
+            ("shares", "ALTER TABLE clips ADD COLUMN shares REAL"),
+            ("engagement_score", "ALTER TABLE clips ADD COLUMN engagement_score REAL"),
+            ("tags", "ALTER TABLE clips ADD COLUMN tags TEXT"),
+            ("transcript", "ALTER TABLE clips ADD COLUMN transcript TEXT"),
+        ):
+            if col not in existing:
+                conn.execute(ddl)
+
+        # One-time migration: the old per-platform "Subreddits" and "TikTok
+        # Hashtags" tabs are now the single unified "Search Parameters" list
+        # (search_terms table) -- fold the TikTok hashtags in as search
+        # terms so nothing curated gets lost. Subreddits are NOT folded in
+        # here -- Reddit sourcing switched from subreddit-based to
+        # keyword-based, so the `subreddits` table now means something
+        # different (an adaptive origin dimension, see subreddit_votes)
+        # rather than "a search term".
+        if not conn.execute("SELECT 1 FROM search_terms LIMIT 1").fetchone():
+            conn.execute(
+                "INSERT OR IGNORE INTO search_terms (term, category, added_at) "
+                "SELECT hashtag, category, added_at FROM tiktok_hashtags"
+            )
 
         # One-time backfill: seed triage_stats' "keeps" side from clips that
         # were already triaged=1 before this feature existed. Rejected
@@ -346,6 +371,12 @@ def delete_setting(key: str) -> None:
         conn.execute("DELETE FROM settings WHERE key = ?", (key,))
 
 
+def get_setting_value(key: str) -> str | None:
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
 # --- subreddits (the live, dashboard-editable scrape source list) ------
 
 def has_any_subreddits() -> bool:
@@ -474,6 +505,129 @@ def upsert_hashtag(tag: str, category: str) -> None:
 def delete_hashtag(tag: str) -> None:
     with get_conn() as conn:
         conn.execute("DELETE FROM tiktok_hashtags WHERE hashtag = ?", (tag,))
+
+
+# --- search_terms (the unified, dashboard-editable search-parameter list,
+# shared across Reddit keyword search / TikTok / Instagram hashtag search) --
+
+def has_any_search_terms() -> bool:
+    with get_conn() as conn:
+        row = conn.execute("SELECT 1 FROM search_terms LIMIT 1").fetchone()
+    return row is not None
+
+
+def bulk_seed_search_terms(mapping: dict) -> None:
+    now = utcnow_iso()
+    with get_conn() as conn:
+        conn.executemany(
+            "INSERT OR IGNORE INTO search_terms (term, category, added_at) VALUES (?, ?, ?)",
+            [(term, category, now) for term, category in mapping.items()],
+        )
+
+
+def list_search_terms(category: str | None = None) -> list[str]:
+    query = "SELECT term FROM search_terms"
+    params: tuple = ()
+    if category:
+        query += " WHERE category = ?"
+        params = (category,)
+    query += " ORDER BY term"
+    with get_conn() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [r["term"] for r in rows]
+
+
+def list_search_terms_full() -> list[dict]:
+    """[{term, category, added_at}, ...], for the /search-parameters dashboard page."""
+    with get_conn() as conn:
+        rows = conn.execute("SELECT * FROM search_terms ORDER BY category, term COLLATE NOCASE").fetchall()
+    return [dict(r) for r in rows]
+
+
+def find_search_term_case_insensitive(term: str) -> str | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT term FROM search_terms WHERE term = ? COLLATE NOCASE", (term,)
+        ).fetchone()
+    return row["term"] if row else None
+
+
+def upsert_search_term(term: str, category: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO search_terms (term, category, added_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(term) DO UPDATE SET category = excluded.category",
+            (term, category, utcnow_iso()),
+        )
+
+
+def delete_search_term(term: str) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM search_terms WHERE term = ?", (term,))
+
+
+# --- adaptive vote tracking (scraper/adaptive.py) --------------------------
+
+def bump_tag_vote(tag: str, category: str | None, liked: bool) -> tuple[int, int]:
+    """Increments a tag's like or dislike counter and returns (likes, dislikes)."""
+    col = "likes" if liked else "dislikes"
+    with get_conn() as conn:
+        conn.execute(
+            f"INSERT INTO tag_votes (tag, category, likes, dislikes) VALUES (?, ?, {1 if liked else 0}, {0 if liked else 1}) "
+            f"ON CONFLICT(tag) DO UPDATE SET {col} = {col} + 1, category = excluded.category",
+            (tag, category),
+        )
+        row = conn.execute("SELECT likes, dislikes FROM tag_votes WHERE tag = ?", (tag,)).fetchone()
+    return (row["likes"], row["dislikes"]) if row else (0, 0)
+
+
+def bump_subreddit_vote(name: str, liked: bool) -> tuple[int, int]:
+    col = "likes" if liked else "dislikes"
+    with get_conn() as conn:
+        conn.execute(
+            f"INSERT INTO subreddit_votes (name, likes, dislikes) VALUES (?, {1 if liked else 0}, {0 if liked else 1}) "
+            f"ON CONFLICT(name) DO UPDATE SET {col} = {col} + 1",
+            (name,),
+        )
+        row = conn.execute("SELECT likes, dislikes FROM subreddit_votes WHERE name = ?", (name,)).fetchone()
+    return (row["likes"], row["dislikes"]) if row else (0, 0)
+
+
+# --- engagement scoring (scraper/engagement.py) ----------------------------
+
+def get_engagement_stats(source: str) -> dict:
+    """{"likes": (mean, stddev), "comments": (...), "shares": (...)} across
+    every clip ever pulled from `source`, for z-score normalization."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT likes, comments, shares FROM clips WHERE source = ?", (source,)
+        ).fetchall()
+    stats = {}
+    for field in ("likes", "comments", "shares"):
+        values = [r[field] for r in rows if r[field] is not None]
+        if len(values) >= 2:
+            stats[field] = (statistics.mean(values), statistics.pstdev(values))
+        elif values:
+            stats[field] = (values[0], 0.0)
+        else:
+            stats[field] = (0.0, 0.0)
+    return stats
+
+
+def set_clip_engagement_score(clip_id: int, score: float) -> None:
+    with get_conn() as conn:
+        conn.execute("UPDATE clips SET engagement_score = ? WHERE id = ?", (score, clip_id))
+
+
+def get_available_clips_for_autobuild() -> list[dict]:
+    """Triaged, not-yet-used clips with a computed engagement score,
+    highest first -- the pool compiler/auto_build.py picks from."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM clips WHERE triaged = 1 AND status = 'new' AND duration_sec IS NOT NULL "
+            "AND engagement_score IS NOT NULL ORDER BY engagement_score DESC"
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # --- triage_stats (per-source approval/rejection tracking, see app.py's

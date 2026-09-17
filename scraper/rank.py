@@ -11,6 +11,7 @@ Video and image/gif candidates are ranked as two entirely separate pools
 splitting by `media_type` before calling into this module; nothing here
 ever compares a video's velocity to an image's.
 """
+import json
 import logging
 
 import db
@@ -18,6 +19,24 @@ from scraper.candidate import Candidate
 from scraper.downloader import DownloadError, download_and_store
 
 log = logging.getLogger("meme_pipeline.rank")
+
+
+def _analyze_and_annotate(fields: dict) -> dict:
+    """Runs the freeform vision+audio analyzer (analyzer/) on a just-
+    downloaded clip and folds tags/caption/transcript into the fields dict
+    that gets handed to db.insert_clip(). Best-effort: analyzer failures
+    are logged and swallowed so a slow/unreachable local model never takes
+    down the scrape."""
+    try:
+        from analyzer.pipeline import analyze_clip
+        analysis = analyze_clip(fields["file_path"], fields["media_type"])
+        fields["tags"] = json.dumps(analysis.get("tags", []))
+        fields["transcript"] = analysis.get("transcript", "")
+    except Exception:
+        log.exception("Analyzer failed for %s; storing clip without tags", fields.get("file_path"))
+        fields.setdefault("tags", json.dumps([]))
+        fields.setdefault("transcript", "")
+    return fields
 
 
 def score_candidate(c: Candidate) -> float:
@@ -75,7 +94,13 @@ def pull_top_candidate(candidates: list[Candidate], label: str = "") -> int | No
                           attempt, label, candidate.source, candidate.source_id)
             continue
 
+        fields = _analyze_and_annotate(fields)
         clip_id = db.insert_clip(**fields)
+        try:
+            from scraper.engagement import compute_and_store
+            compute_and_store(clip_id)
+        except Exception:
+            log.exception("Engagement scoring failed for clip id=%d", clip_id)
         db.log_scrape_run(len(candidates), clip_id, label)
         log.info("Stored clip id=%d (%s/%s, category=%s, media_type=%s)%s", clip_id, candidate.source,
                   candidate.source_id, candidate.category, candidate.media_type,

@@ -28,6 +28,12 @@ CREATE TABLE IF NOT EXISTS clips (
     status          TEXT    NOT NULL DEFAULT 'new',   -- new | selected | used | rejected
     triaged         INTEGER NOT NULL DEFAULT 0,       -- 0 = awaiting /triage accept-or-delete pass, 1 = kept
     compilation_id  INTEGER,                          -- set once included in a built compilation
+    likes           REAL,                              -- raw likes/upvotes, kept separate from `score` for engagement scoring
+    comments        REAL,                              -- raw comment count, when the source dataset exposes one
+    shares          REAL,                              -- raw share count, when the source dataset exposes one
+    engagement_score REAL,                             -- composite, per-platform z-score weighted (scraper/engagement.py)
+    tags            TEXT,                               -- JSON list of freeform tags from the analyzer (analyzer/)
+    transcript      TEXT,                               -- Whisper speech transcript, when the clip has audio
     UNIQUE(source, source_id),
     FOREIGN KEY (compilation_id) REFERENCES compilations(id)
 );
@@ -83,10 +89,13 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at      TEXT    NOT NULL
 );
 
--- The live, editable subreddit source list (dashboard's /subreddits page).
--- Seeded once from scraper/subreddits.py's DEFAULT_SUBREDDIT_CATEGORY the
--- first time this table is empty; after that this table is the source of
--- truth the hourly scraper actually reads, not the hardcoded dict.
+-- Preferred/origin subreddits -- no longer what drives Reddit scraping
+-- (that's search_terms below, since Reddit sourcing switched to
+-- keyword search), but kept as its own adaptive dimension: liked/disliked
+-- clips bump subreddit_votes, and crossing the vote threshold adds/removes
+-- a row here (scraper/adaptive.py). Still editable by hand from the
+-- dashboard's Search Parameters page. Seeded once from scraper/subreddits.py's
+-- DEFAULT_SUBREDDIT_CATEGORY the first time this table is empty.
 CREATE TABLE IF NOT EXISTS subreddits (
     name            TEXT PRIMARY KEY,                 -- as typed, e.g. "PublicFreakout" (no "r/" prefix)
     category        TEXT    NOT NULL,                 -- one of scraper.subreddits.CATEGORIES
@@ -102,6 +111,40 @@ CREATE TABLE IF NOT EXISTS tiktok_hashtags (
     hashtag         TEXT PRIMARY KEY,                 -- as typed, e.g. "#satisfying" or "satisfying"
     category        TEXT    NOT NULL,                 -- one of scraper.subreddits.CATEGORIES
     added_at        TEXT    NOT NULL
+);
+
+-- The unified "Search Parameters" list (dashboard's /search-parameters page,
+-- formerly the separate Subreddits + TikTok Hashtags tabs/tables above,
+-- which are now migrated in here and kept only as one-time-migration
+-- sources -- see db.py's _migrate()). One list of search terms shared by
+-- Reddit (keyword search, sorted hot), TikTok, and Instagram, rather than
+-- separate per-platform lists. Grown/pruned automatically by the adaptive
+-- system (scraper/adaptive.py) as well as by hand.
+CREATE TABLE IF NOT EXISTS search_terms (
+    term            TEXT PRIMARY KEY,                 -- as typed, e.g. "meme" or "#satisfying"
+    category        TEXT    NOT NULL,                 -- one of scraper.subreddits.CATEGORIES
+    added_at        TEXT    NOT NULL
+);
+
+-- Running like/dislike counts per freeform analyzer tag, used by the
+-- adaptive system to auto add/remove a `search_terms` entry once a tag
+-- crosses config.ADAPTIVE_VOTE_THRESHOLD on either side.
+CREATE TABLE IF NOT EXISTS tag_votes (
+    tag             TEXT PRIMARY KEY,
+    category        TEXT,                              -- most recent clip category this tag was seen tagging
+    likes           INTEGER NOT NULL DEFAULT 0,
+    dislikes        INTEGER NOT NULL DEFAULT 0
+);
+
+-- Running like/dislike counts per Reddit subreddit-of-origin -- its own
+-- taggable dimension alongside content tags (section 3 of the spec),
+-- tracked even though Reddit sourcing is keyword-based now, not
+-- subreddit-list-based. Crossing the threshold adds/removes the
+-- subreddit from the `subreddits` table below.
+CREATE TABLE IF NOT EXISTS subreddit_votes (
+    name            TEXT PRIMARY KEY,
+    likes           INTEGER NOT NULL DEFAULT 0,
+    dislikes        INTEGER NOT NULL DEFAULT 0
 );
 
 -- Per-source triage approval stats, updated on every /triage keep or

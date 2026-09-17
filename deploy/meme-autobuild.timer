@@ -1,0 +1,11 @@
+[Unit]
+Description=Run meme-pipeline auto-compile pass periodically (no-op unless the autonomy dial is 'assisted'/'autonomous')
+
+[Timer]
+OnCalendar=*-*-* */3:00:00
+RandomizedDelaySec=300
+Persistent=true
+Unit=meme-autobuild.service
+
+[Install]
+WantedBy=timers.target

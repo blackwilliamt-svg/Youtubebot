@@ -1,12 +1,48 @@
 # meme-pipeline
 
-Scrapes trending meme/fail/animal/gaming/wins clips (video **and**
-images/GIFs) from Reddit, TikTok and Instagram once an hour, lets you triage
-and pick items from a local web dashboard, stitches the picks (plus any
-manually-inserted reaction clips) into a vertical YouTube Shorts
-compilation with sound effects and background music, and uploads the
-result to YouTube -- all running unattended on a 2GB DigitalOcean
-droplet.
+Scrapes trending funny/viral meme, fail, and political-satire clips from
+Reddit, TikTok and Instagram once an hour (1 video per platform per
+pull), lets you triage and pick items from a local web dashboard,
+stitches the picks (plus any manually-inserted reaction clips) into a
+vertical YouTube Shorts compilation, and uploads the result to YouTube --
+all running unattended on a 2GB DigitalOcean droplet.
+
+## Recent changes (this pass)
+
+- **Bug fixes**: `downloader.py`'s image/gif download no longer crashes
+  (`config.REDDIT_USER_AGENT` now exists); the Instagram source no longer
+  silently drops an entire batch when its duration field is named
+  differently than expected (see `scraper/instagram_source.py`); no clip
+  over **15s** (was 120s) is ever pulled.
+- **Search Parameters**: the old separate "Subreddits" and "TikTok
+  Hashtags" tabs are now one unified, dashboard-editable list
+  (`scraper/search_terms.py`, `/search-parameters`) shared by all three
+  platforms. Reddit sourcing switched from subreddit-based to
+  keyword-based (Bright Data's keyword search, sorted "hot") to match.
+- **Adaptive system** (`scraper/adaptive.py`): a tag or a Reddit
+  subreddit-of-origin crossing 3 liked (or disliked) clips in Triage gets
+  auto-added to (or removed from) the search-parameter list.
+- **Content focus**: three open-ended categories now --
+  `funny-viral` / `fails` / `political-satire` (animal/cute and gaming
+  are de-emphasized) -- with an open freeform tagging system
+  (`analyzer/`, a local vision+audio model) instead of a fixed bucket
+  list per clip.
+- **Analyzer** (`analyzer/`): motion/scene-change-based frame sampling
+  (`frame_sampler.py`), a Whisper speech-transcript layer (`audio.py`),
+  and a local vision-language model call via Ollama (`vision.py`) that
+  generates freeform tags per clip. Requires a one-time Ollama setup on
+  the droplet -- see `deploy/setup_droplet.sh`'s printed instructions;
+  clips still download fine without it, just untagged.
+- **Composite engagement scoring** (`scraper/engagement.py`): a
+  per-platform z-score weighted (likes/comments/shares) score, separate
+  from the scrape-time "trending velocity" score, used to rank clips for
+  compilation-building.
+- **Automated compilation builder** (`compiler/auto_build.py`): picks
+  clips by composite engagement score until total runtime lands in a
+  60-90s window, straight cuts only (no transitions/sfx/music) -- a
+  second, independent path alongside the existing manual `/build`
+  screen. Gated by a "trust dial" (`autonomy.py`, `/settings`):
+  manual / assisted / autonomous.
 
 ## How it fits together
 

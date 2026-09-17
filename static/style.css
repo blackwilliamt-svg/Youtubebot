@@ -102,6 +102,11 @@ button:hover { filter: brightness(1.1); }
 .clip-meta { font-size: 0.8rem; margin-top: 0.4rem; }
 .clip-title { font-weight: 600; margin-bottom: 0.2rem; }
 .clip-sub { color: var(--muted); }
+.clip-tags { margin: 0.3rem 0; display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.clip-tags .tag {
+  font-size: 0.72rem; padding: 0.1rem 0.5rem; border-radius: 999px;
+  background: var(--accent-soft, #eef); color: var(--muted);
+}
 .clip-meta a { color: var(--accent); font-size: 0.75rem; }
 .clip-meta .btn-remove { display: block; margin-top: 0.5rem; width: 100%; }
 .media-type-badge {

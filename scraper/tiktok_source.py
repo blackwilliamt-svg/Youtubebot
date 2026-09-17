@@ -5,13 +5,12 @@ Replaces the old YouTube Bright Data leg. TikTok has no equivalent of a
 "chart" API for us to hit, so discovery is entirely keyword/hashtag-driven,
 via Bright Data's "Discover by keyword" TikTok collector:
 
-1. A broad "trending <category>" keyword search for each of the five
-   categories that have a good generic trending query (mildly-infuriating
-   is deliberately excluded here too -- no good generic query for it).
+1. A broad "trending <category>" keyword search for each category that
+   has a good generic trending query.
 2. One hour-rotated category-specific query (SEARCH_QUERIES below) PLUS
-   that category's curated hashtags (scraper/tiktok_hashtags.py -- editable
-   from the dashboard's /tiktok-hashtags page), each fed to the scraper as
-   its own keyword input.
+   that category's terms from the unified Search Parameters list
+   (scraper/search_terms.py -- editable from the dashboard), each fed to
+   the scraper as its own keyword input.
 
 All of the above collapses into one Bright Data trigger/poll/fetch round
 trip per run (scraper/brightdata_client.py) -- one API call covers every
@@ -28,30 +27,27 @@ from datetime import datetime, timezone
 import config
 from scraper.brightdata_client import run_collection
 from scraper.candidate import Candidate
-from scraper.tiktok_hashtags import hashtags_for_category
+from scraper.search_terms import terms_for_category
 
 log = logging.getLogger("meme_pipeline.tiktok")
 
 # category -> a generic "trending" query, run every hour for every category
-# that has one (mirrors the old YouTube-chart category coverage).
+# that has one. Revised for the current content focus (funny/viral memes,
+# fails, political satire) -- animal/cute and gaming are de-emphasized.
 TRENDING_QUERY_BY_CATEGORY = {
-    "animals": "trending animal video",
-    "gaming": "trending gaming clip",
-    "wins": "trending sports highlight",
+    "funny-viral": "trending funny viral video",
     "fails": "trending comedy fail compilation",
-    "oddly-satisfying": "trending oddly satisfying video",
+    "political-satire": "political satire meme",
 }
 
 # (search query, category) -- one is used per hourly run, rotated by hour.
-# mildly-infuriating has no good generic trending query, so it only gets
-# covered through this rotated leg (plus its hashtags), not the map above.
 SEARCH_QUERIES = [
     ("epic fail compilation clip", "fails"),
-    ("oddly satisfying clip", "oddly-satisfying"),
-    ("amazing animal moment clip", "animals"),
-    ("insane gaming clip", "gaming"),
-    ("wholesome win moment clip", "wins"),
-    ("mildly infuriating moment clip", "mildly-infuriating"),
+    ("funny viral meme clip", "funny-viral"),
+    ("oddly satisfying clip", "funny-viral"),
+    ("wholesome moment clip", "funny-viral"),
+    ("political satire clip", "political-satire"),
+    ("satirical political meme video", "political-satire"),
 ]
 QUERY_BY_CATEGORY = {cat: q for q, cat in SEARCH_QUERIES}
 
@@ -115,6 +111,9 @@ def _candidate_from_row(row: dict, category: str) -> Candidate | None:
 
     video_url = url or f"https://www.tiktok.com/@{_first(row, 'author', 'username', default='i')}/video/{vid}"
     views = _first(row, "play_count", "views", "playCount", "num_views", default=0)
+    likes = _first(row, "digg_count", "like_count", "likes", default=0)
+    comments = _first(row, "comment_count", "comments", default=0)
+    shares = _first(row, "share_count", "shares", default=0)
     return Candidate(
         source="tiktok",
         source_id=str(vid),
@@ -124,6 +123,9 @@ def _candidate_from_row(row: dict, category: str) -> Candidate | None:
         title=_first(row, "title", "description", "desc", "text", default=""),
         author=_first(row, "author", "username", "authorMeta", "channel_name", default=""),
         score=_to_float(views),
+        likes=_to_float(likes),
+        comments=_to_float(comments),
+        shares=_to_float(shares),
         published_at=_parse_datetime(_first(row, "create_time", "createTime", "upload_date", "date_posted")),
     )
 
@@ -137,8 +139,8 @@ def _inputs_for_category(category: str, query: str | None) -> list[tuple[dict, s
     pairs = []
     if query:
         pairs.append(({"keyword": query}, category))
-    for tag in hashtags_for_category(category):
-        pairs.append(({"keyword": tag}, category))
+    for term in terms_for_category(category):
+        pairs.append(({"keyword": term}, category))
     return pairs
 
 

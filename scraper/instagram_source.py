@@ -21,13 +21,14 @@ from scraper.candidate import Candidate
 
 log = logging.getLogger("meme_pipeline.instagram")
 
+# Revised for the current content focus (funny/viral memes, fails, political
+# satire) -- animal/cute and gaming are de-emphasized.
 SEARCH_QUERIES = [
     ("fail compilation", "fails"),
-    ("satisfying", "oddly-satisfying"),
-    ("funny animal", "animals"),
-    ("gaming highlight", "gaming"),
-    ("amazing moment", "wins"),
-    ("mildly infuriating", "mildly-infuriating"),
+    ("funny meme reel", "funny-viral"),
+    ("satisfying video", "funny-viral"),
+    ("wholesome moment", "funny-viral"),
+    ("political satire meme", "political-satire"),
 ]
 QUERY_BY_CATEGORY = {cat: q for q, cat in SEARCH_QUERIES}
 
@@ -63,9 +64,19 @@ def _candidate_from_row(row: dict, category: str) -> Candidate | None:
     if post_type and post_type not in ("reel", "clips", "video"):
         return None
 
-    duration = _to_float(_first(row, "video_duration", "duration", default=0))
-    if not (config.MIN_CLIP_DURATION_SEC <= duration <= config.MAX_CLIP_DURATION_SEC):
-        return None
+    # Bug fix: this used to default a missing duration field to 0 and then
+    # range-check it, so if the dataset's field name didn't match one of the
+    # ones we try, EVERY row silently failed the range check (0 is always
+    # below MIN_CLIP_DURATION_SEC) and got filtered out -- not just the rows
+    # that were genuinely too long/short. Check the field actually exists
+    # first; only apply the duration filter when we actually have a duration
+    # to check, so a missing/renamed field just skips this filter for that
+    # item instead of nuking the whole batch.
+    duration_raw = _first(row, "video_duration", "duration", default=None)
+    if duration_raw is not None:
+        duration = _to_float(duration_raw)
+        if not (config.MIN_CLIP_DURATION_SEC <= duration <= config.MAX_CLIP_DURATION_SEC):
+            return None
 
     shortcode = _first(row, "shortcode", "post_id", "id")
     link = _first(row, "url", "link", "post_url")
@@ -77,6 +88,8 @@ def _candidate_from_row(row: dict, category: str) -> Candidate | None:
     link = link or f"https://www.instagram.com/reel/{shortcode}/"
 
     views = _first(row, "video_play_count", "views", "play_count", "num_views", default=0)
+    likes = _first(row, "likes", "like_count", default=0)
+    comments = _first(row, "comments", "comment_count", default=0)
     return Candidate(
         source="instagram",
         source_id=str(shortcode),
@@ -86,6 +99,9 @@ def _candidate_from_row(row: dict, category: str) -> Candidate | None:
         title=_first(row, "caption", "title", "description", default=""),
         author=_first(row, "owner_username", "username", "author", default=""),
         score=_to_float(views),
+        likes=_to_float(likes),
+        comments=_to_float(comments),
+        shares=0.0,  # Instagram's Bright Data dataset doesn't expose a share count
         published_at=_parse_datetime(_first(row, "date_posted", "timestamp", "published_at")),
     )
 

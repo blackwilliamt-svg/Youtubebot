@@ -2,11 +2,12 @@
 """
 Entrypoint for the hourly scrape. Invoked by the meme-scrape systemd timer
 (see deploy/meme-scrape.timer) -- gathers candidates from every source,
-then pulls TWO items: the single most-trending video, and separately the
-single most-trending image/GIF (ranked on its own scale, never compared
-against video engagement numbers). ~24 video + ~24 image/GIF per day.
-Falls through to the next-best candidate in each bucket if the top pick
-fails to download (dead link, geo-block, etc.) rather than losing the hour.
+then pulls ONE video per platform (Reddit, TikTok, Instagram), each
+ranked against just that platform's own candidates. That's ~3/hour,
+~2,160/month -- comfortably under a 3,000/month target and under Bright
+Data's 5,000 free-tier credits. Falls through to the next-best candidate
+per platform if the top pick fails to download (dead link, geo-block,
+etc.) rather than losing the hour for that platform.
 
     python -m scraper.run_hourly
 """
@@ -24,26 +25,24 @@ logging.basicConfig(
 )
 log = logging.getLogger("meme_pipeline.run_hourly")
 
-
-def gather_all_candidates():
-    candidates = []
-    for source_module in (reddit_source, tiktok_source, instagram_source):
-        try:
-            candidates += source_module.gather_candidates()
-        except Exception:
-            log.exception("Source %s raised unexpectedly; continuing without it", source_module.__name__)
-    return candidates
+SOURCES = (
+    ("reddit", reddit_source),
+    ("tiktok", tiktok_source),
+    ("instagram", instagram_source),
+)
 
 
 def run():
     db.init_db()
-    candidates = gather_all_candidates()
-    video_candidates = [c for c in candidates if c.media_type == "video"]
-    image_candidates = [c for c in candidates if c.media_type in ("image", "gif")]
-    log.info("Total candidates this hour: %d video, %d image/gif", len(video_candidates), len(image_candidates))
-
-    rank.pull_top_candidate(video_candidates, "hourly video")
-    rank.pull_top_candidate(image_candidates, "hourly image/gif")
+    for label, source_module in SOURCES:
+        try:
+            candidates = source_module.gather_candidates()
+        except Exception:
+            log.exception("Source %s raised unexpectedly; continuing without it", source_module.__name__)
+            continue
+        video_candidates = [c for c in candidates if c.media_type == "video"]
+        log.info("%s: %d video candidate(s) this hour", label, len(video_candidates))
+        rank.pull_top_candidate(video_candidates, f"hourly {label} video")
 
 
 def main():

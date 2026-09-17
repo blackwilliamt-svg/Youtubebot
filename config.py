@@ -55,11 +55,20 @@ FLASK_SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", "")
 
 # --- scraping tunables -----------------------------------------------------
 DEDUP_WINDOW_HOURS = int(os.environ.get("DEDUP_WINDOW_HOURS", "24"))
-MAX_CLIP_DURATION_SEC = int(os.environ.get("MAX_CLIP_DURATION_SEC", "120"))
+# Lowered from 120 -> 15: no clip longer than 15s should ever be pulled (short-form only).
+MAX_CLIP_DURATION_SEC = int(os.environ.get("MAX_CLIP_DURATION_SEC", "15"))
 MIN_CLIP_DURATION_SEC = int(os.environ.get("MIN_CLIP_DURATION_SEC", "3"))
 REDDIT_LISTING_LIMIT = int(os.environ.get("REDDIT_LISTING_LIMIT", "15"))
 FFMPEG_CRF = os.environ.get("FFMPEG_CRF", "25")
 FFMPEG_PRESET = os.environ.get("FFMPEG_PRESET", "veryfast")
+# Reddit doesn't strictly need a real UA any more now that Bright Data does the
+# actual crawling/rendering (scraper/reddit_source.py), but our own plain HTTP
+# image/gif downloads (scraper/downloader.py's _download_raw) still send one --
+# a generic browser-ish string keeps CDNs that reject blank/"python-requests"
+# user agents from silently 403'ing those downloads.
+REDDIT_USER_AGENT = os.environ.get(
+    "REDDIT_USER_AGENT", "Mozilla/5.0 (compatible; meme-pipeline/1.0; +https://github.com/blackwilliamt-svg/Youtubebot)"
+)
 
 # --- compilation output ---------------------------------------------------
 OUTPUT_WIDTH = int(os.environ.get("OUTPUT_WIDTH", "720"))
@@ -83,3 +92,55 @@ SNAPSHOT_CATEGORY_DELAY_SEC = float(os.environ.get("SNAPSHOT_CATEGORY_DELAY_SEC"
 # --- misc --------------------------------------------------------------
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 YTDLP_COOKIES_FILE = os.environ.get("YTDLP_COOKIES_FILE", "")  # optional
+
+# --- analyzer: freeform vision+audio tagging (see analyzer/) ---------------
+# Local/open-source model, run via Ollama on the droplet -- no per-call API
+# cost, but CPU-only inference on a small droplet will be slow; if that's a
+# problem in practice, point OLLAMA_HOST at a bigger box or swap in a hosted
+# vision API later (analyzer/vision.py is the only file that would need to
+# change).
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+OLLAMA_VISION_MODEL = os.environ.get("OLLAMA_VISION_MODEL", "llava:7b")
+ANALYZER_TIMEOUT_SEC = float(os.environ.get("ANALYZER_TIMEOUT_SEC", "180"))
+ANALYZER_MAX_FRAMES = int(os.environ.get("ANALYZER_MAX_FRAMES", "16"))
+ANALYZER_MAX_TAGS = int(os.environ.get("ANALYZER_MAX_TAGS", "12"))
+
+# Motion/scene-change-based frame sampling (replaces flat-rate sampling):
+# denser frames while FRAME_DIFF_THRESHOLD is exceeded between the current
+# candidate frame and the last *kept* frame, sparser at rest.
+FRAME_SAMPLE_REST_SEC = float(os.environ.get("FRAME_SAMPLE_REST_SEC", "0.5"))
+FRAME_SAMPLE_MOTION_SEC = float(os.environ.get("FRAME_SAMPLE_MOTION_SEC", "0.25"))
+FRAME_DIFF_THRESHOLD = float(os.environ.get("FRAME_DIFF_THRESHOLD", "12.0"))  # mean abs diff, 0-255 grayscale
+
+# faster-whisper model size for the audio-transcript layer fed alongside
+# frames into the tagging prompt -- "small"/"medium" run fine on CPU.
+WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "small")
+
+# --- adaptive search-parameter system ---------------------------------
+# Flat vote count (not "every N") at which a tag/subreddit gets auto
+# added (3 likes) or auto removed (3 dislikes) from the search-parameter
+# list -- intentionally not 1, so a one-off viral outlier can't skew it.
+ADAPTIVE_VOTE_THRESHOLD = int(os.environ.get("ADAPTIVE_VOTE_THRESHOLD", "3"))
+
+# --- composite engagement scoring (compilation clip ranking) ---------------
+# Per-platform z-score normalized weighted sum -- see scraper/engagement.py.
+ENGAGEMENT_WEIGHT_LIKES = float(os.environ.get("ENGAGEMENT_WEIGHT_LIKES", "0.5"))
+ENGAGEMENT_WEIGHT_COMMENTS = float(os.environ.get("ENGAGEMENT_WEIGHT_COMMENTS", "0.3"))
+ENGAGEMENT_WEIGHT_SHARES = float(os.environ.get("ENGAGEMENT_WEIGHT_SHARES", "0.2"))
+
+# --- automated (trust-dial) compilation builder ----------------------------
+# Separate from MAX_COMPILATION_SEC above, which caps the *manual* /build
+# screen's output -- the automated builder (compiler/auto_build.py) targets
+# its own 60-90s window per the spec, picking clips by composite engagement
+# score until it lands in range.
+AUTO_COMPILATION_MIN_SEC = float(os.environ.get("AUTO_COMPILATION_MIN_SEC", "60"))
+AUTO_COMPILATION_MAX_SEC = float(os.environ.get("AUTO_COMPILATION_MAX_SEC", "90"))
+
+# Clip-selection "trust dial" -- see autonomy.py. manual = you build every
+# compilation by hand from /build; assisted = the pipeline tells you when
+# enough top-ranked material exists but still waits for you; autonomous =
+# it builds (but does not upload) automatically. Thumbnail selection will
+# reuse this same manual/assisted/autonomous pattern later (not wired up
+# yet -- see README).
+AUTONOMY_LEVELS = ("manual", "assisted", "autonomous")
+DEFAULT_AUTONOMY_LEVEL = os.environ.get("DEFAULT_AUTONOMY_LEVEL", "manual")

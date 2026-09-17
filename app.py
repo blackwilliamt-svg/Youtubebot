@@ -27,16 +27,19 @@ from werkzeug.utils import secure_filename
 
 import account_settings
 import api_settings
+import autonomy
 import config
 import db
 import library
 from compiler.build import (ALLOWED_TRANSITIONS, DEFAULT_TRANSITION, MAX_ITEM_VOLUME,
                              BuildError, build_compilation)
+from compiler.auto_build import AutoBuildError, build_auto_compilation
 from manual_import import ManualImportError, import_url
 from manual_upload import ManualUploadError, import_file
+from scraper import adaptive
 from scraper.snapshot import run_test_snapshot
+from scraper import search_terms as search_terms_module
 from scraper import subreddits as subreddits_module
-from scraper import tiktok_hashtags as hashtags_module
 from scraper.subreddits import CATEGORIES
 from youtube_upload import oauth as yt_oauth
 from youtube_upload.upload import UploadError, upload_video
@@ -157,6 +160,17 @@ def review_delete(clip_id):
 
 # --- triage (first-pass accept/reject, one item at a time) -----------------
 
+def _parsed_tags(item: dict) -> list:
+    raw = item.get("tags")
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, list) else []
+    except ValueError:
+        return []
+
+
 @app.route("/triage")
 @login_required
 def triage():
@@ -164,6 +178,7 @@ def triage():
     item = db.get_next_untriaged_clip(date_str)
     if item:
         item["video_rel"] = _media_rel(item.get("file_path"))
+        item["tag_list"] = _parsed_tags(item)
     remaining = db.count_untriaged(date_str)
     return render_template("triage.html", item=item, remaining=remaining, date_str=date_str)
 
@@ -175,6 +190,7 @@ def triage_keep(clip_id):
     db.set_triaged(clip_id, True)
     if clip:
         db.record_triage_keep(clip["source"], clip.get("subreddit"))
+        adaptive.record_clip_vote(clip, liked=True)
     return redirect(url_for("triage", date=request.form.get("date") or None))
 
 
@@ -200,6 +216,7 @@ def triage_reject(clip_id):
     clip = _delete_clip_and_files(clip_id, "Triage")
     if clip:
         db.record_triage_reject(clip["source"], clip.get("subreddit"))
+        adaptive.record_clip_vote(clip, liked=False)
     return redirect(url_for("triage", date=request.form.get("date") or None))
 
 
@@ -447,18 +464,58 @@ def import_file_run():
     return redirect(url_for("job_status_page", job_id=job_id))
 
 
-# --- subreddit source list (add/remove what the hourly scraper pulls) ------
+# --- search parameters (unified list -- Reddit keywords, TikTok hashtags,
+# Instagram hashtags all share this one list now, see scraper/search_terms.py) --
 
-@app.route("/subreddits")
+@app.route("/search-parameters")
 @login_required
-def subreddits():
+def search_parameters():
     by_category = {cat: [] for cat in CATEGORIES}
+    for t in search_terms_module.all_terms_with_categories():
+        by_category.setdefault(t["category"], []).append(t)
+    subreddit_by_category = {cat: [] for cat in CATEGORIES}
     for s in subreddits_module.all_subreddits_with_categories():
-        by_category.setdefault(s["category"], []).append(s)
-    return render_template("subreddits.html", by_category=by_category)
+        subreddit_by_category.setdefault(s["category"], []).append(s)
+    return render_template(
+        "search_parameters.html",
+        by_category=by_category,
+        subreddit_by_category=subreddit_by_category,
+    )
 
 
-@app.route("/subreddits/add", methods=["POST"])
+# Old bookmarks/links -- redirect rather than 404.
+@app.route("/subreddits")
+@app.route("/tiktok-hashtags")
+@login_required
+def search_parameters_redirect():
+    return redirect(url_for("search_parameters"))
+
+
+@app.route("/search-parameters/add", methods=["POST"])
+@login_required
+def search_parameters_add():
+    term = request.form.get("term", "")
+    category = request.form.get("category", "")
+    try:
+        stored_term = search_terms_module.add_term(term, category)
+        flash(f"Added {stored_term!r} to {category}.", "success")
+    except ValueError as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("search_parameters"))
+
+
+@app.route("/search-parameters/<path:term>/remove", methods=["POST"])
+@login_required
+def search_parameters_remove(term):
+    search_terms_module.remove_term(term)
+    flash(f"Removed {term!r}. Already-pulled clips are untouched.", "success")
+    return redirect(url_for("search_parameters"))
+
+
+# --- preferred/origin subreddits (adaptive dimension, see scraper/adaptive.py;
+# no longer what drives Reddit scraping -- search_parameters above does) ------
+
+@app.route("/search-parameters/subreddits/add", methods=["POST"])
 @login_required
 def subreddits_add():
     name = request.form.get("name", "")
@@ -468,45 +525,15 @@ def subreddits_add():
         flash(f"Added r/{stored_name} to {category}.", "success")
     except ValueError as exc:
         flash(str(exc), "error")
-    return redirect(url_for("subreddits"))
+    return redirect(url_for("search_parameters"))
 
 
-@app.route("/subreddits/<path:name>/remove", methods=["POST"])
+@app.route("/search-parameters/subreddits/<path:name>/remove", methods=["POST"])
 @login_required
 def subreddits_remove(name):
     subreddits_module.remove_subreddit(name)
-    flash(f"Removed r/{name}. Already-pulled clips from it are untouched.", "success")
-    return redirect(url_for("subreddits"))
-
-
-@app.route("/tiktok-hashtags")
-@login_required
-def tiktok_hashtags():
-    by_category = {cat: [] for cat in CATEGORIES}
-    for h in hashtags_module.all_hashtags_with_categories():
-        by_category.setdefault(h["category"], []).append(h)
-    return render_template("tiktok_hashtags.html", by_category=by_category)
-
-
-@app.route("/tiktok-hashtags/add", methods=["POST"])
-@login_required
-def tiktok_hashtags_add():
-    tag = request.form.get("hashtag", "")
-    category = request.form.get("category", "")
-    try:
-        stored_tag = hashtags_module.add_hashtag(tag, category)
-        flash(f"Added {stored_tag} to {category}.", "success")
-    except ValueError as exc:
-        flash(str(exc), "error")
-    return redirect(url_for("tiktok_hashtags"))
-
-
-@app.route("/tiktok-hashtags/<path:tag>/remove", methods=["POST"])
-@login_required
-def tiktok_hashtags_remove(tag):
-    hashtags_module.remove_hashtag(tag)
-    flash(f"Removed {tag}. Already-pulled clips from it are untouched.", "success")
-    return redirect(url_for("tiktok_hashtags"))
+    flash(f"Removed r/{name} from the preferred list.", "success")
+    return redirect(url_for("search_parameters"))
 
 
 # --- triage approval stats (read-only, per source) -------------------------
@@ -588,7 +615,24 @@ def account_update():
 @app.route("/settings")
 @login_required
 def settings_page():
-    return render_template("settings.html", groups=api_settings.grouped_fields())
+    return render_template(
+        "settings.html",
+        groups=api_settings.grouped_fields(),
+        autonomy_levels=config.AUTONOMY_LEVELS,
+        current_autonomy_level=autonomy.get_level(),
+    )
+
+
+@app.route("/settings/autonomy", methods=["POST"])
+@login_required
+def settings_autonomy_save():
+    level = request.form.get("level", "")
+    try:
+        autonomy.set_level(level)
+        flash(f"Clip-selection autonomy set to {level!r}.", "success")
+    except ValueError as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("settings_page"))
 
 
 @app.route("/settings/save", methods=["POST"])
@@ -632,6 +676,34 @@ def compilations():
         youtube_connected=yt_oauth.has_credentials(),
         youtube_configured=yt_oauth.is_configured(),
     )
+
+
+@app.route("/compilations/auto-build", methods=["POST"])
+@login_required
+def compilations_auto_build():
+    """Manual trigger for the same straight-cut, composite-engagement-ranked
+    builder scraper/run_autobuild.py runs on a schedule when the autonomy
+    dial is 'autonomous' -- handy for testing without waiting for the timer
+    or flipping the dial."""
+    job_id = db.create_job("build")
+
+    def _worker():
+        db.update_job(job_id, status="running", message="Selecting top clips and building (straight cuts)...")
+        try:
+            result = build_auto_compilation()
+            if result:
+                db.update_job(job_id, status="done", ref_id=result["id"], message="Ready")
+            else:
+                db.update_job(job_id, status="error",
+                               message="Not enough qualifying (triaged, unused) material yet for a 60-90s compilation.")
+        except AutoBuildError as exc:
+            db.update_job(job_id, status="error", message=str(exc))
+        except Exception:
+            log.exception("Unexpected error in auto-build job %d", job_id)
+            db.update_job(job_id, status="error", message="Unexpected error, check server logs")
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return redirect(url_for("job_status_page", job_id=job_id))
 
 
 _THUMBNAIL_EXTENSIONS = {".jpg", ".jpeg", ".png"}

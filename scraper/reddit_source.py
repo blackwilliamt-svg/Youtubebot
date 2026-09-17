@@ -5,19 +5,22 @@ Reddit's own API now requires manual Responsible Builder Policy approval
 before you can even read public posts with an app-only OAuth token (the
 old PRAW-based approach this module used to use), which is a hard
 blocker for an unattended pipeline. Bright Data's Reddit Scraper API sits
-in front of Reddit for us instead: we feed it one subreddit URL per
-curated subreddit (scraper/subreddits.py is still the input list, same
-as it fed PRAW before), it does the actual crawling/rendering on its
-side, and hands back a batch of post records once the collection run
-finishes.
+in front of Reddit for us instead.
 
-One dataset-run call covers every subreddit in the list, so a whole pass
-is one trigger + poll + fetch round trip via scraper/brightdata_client.py
-rather than one PRAW listing call per subreddit. Bright Data's dataset
-doesn't expose a separate "rising" listing the way PRAW did -- we pull
-each subreddit's hot listing only; num_of_posts asks for roughly double
-what we used to pull across hot+rising combined so coverage stays
-comparable.
+Sourcing is keyword/search-term based now, not subreddit-list based --
+this matches the hashtag/keyword approach TikTok and Instagram already
+use, so all three platforms share one paradigm and one editable list
+(scraper/search_terms.py, the dashboard's Search Parameters page). Each
+search term becomes one Bright Data keyword-search input (sorted "hot",
+i.e. trending, not "top"/all-time), rather than one input per curated
+subreddit.
+
+One dataset-run call covers every search term in the list, so a whole
+pass is one trigger + poll + fetch round trip via
+scraper/brightdata_client.py. scraper/subreddits.py's `subreddits` table
+still exists, but purely as an adaptive origin-tracking dimension now
+(see scraper/adaptive.py) -- it doesn't restrict or drive what gets
+searched for.
 
 Bright Data's Reddit dataset's exact field names can vary by dataset
 version, so record parsing below is deliberately tolerant: every field is
@@ -32,7 +35,7 @@ from datetime import datetime, timezone
 import config
 from scraper.brightdata_client import run_collection
 from scraper.candidate import Candidate
-from scraper.subreddits import category_for_subreddit, list_all_subreddits, subreddits_for_category
+from scraper import search_terms as search_terms_module
 
 log = logging.getLogger("meme_pipeline.reddit")
 
@@ -148,18 +151,26 @@ def _uses_parent_media(row: dict, parent: dict) -> bool:
     return not (own_video or own_image or row.get("is_video"))
 
 
-def _candidate_from_row(row: dict, subreddit_name: str) -> Candidate | None:
+def _candidate_from_row(row: dict, subreddit_name: str | None, category: str) -> Candidate | None:
     post_id = _first(row, "post_id", "id")
     if not post_id:
         return None
-    # Bright Data's current Reddit shape doesn't echo a per-post permalink field
-    # ("url"/"post_url"/"permalink" all come back as the subreddit's own URL or null),
-    # so build the real post permalink ourselves from post_id + subreddit.
-    short_id = str(post_id).split("_")[-1]
-    permalink = f"https://www.reddit.com/r/{subreddit_name}/comments/{short_id}/"
     raw_link = _first(row, "url", "post_url", "permalink")
+    # Bright Data's current Reddit shape doesn't reliably echo a per-post
+    # permalink field ("url"/"post_url"/"permalink" can come back as the
+    # subreddit's own URL or null), so build the real post permalink
+    # ourselves from post_id + subreddit when we know the subreddit (search
+    # results usually do echo community_name/subreddit) -- else fall back
+    # to whatever link the row gave us.
+    short_id = str(post_id).split("_")[-1]
+    if subreddit_name:
+        permalink = f"https://www.reddit.com/r/{subreddit_name}/comments/{short_id}/"
+    else:
+        permalink = str(raw_link) if raw_link else None
     if raw_link and str(raw_link).startswith("http") and "/comments/" in str(raw_link):
         permalink = str(raw_link)
+    if not permalink:
+        return None
 
     media_type, media_url = _classify_row(row, permalink)
     if media_type is None:
@@ -188,7 +199,7 @@ def _candidate_from_row(row: dict, subreddit_name: str) -> Candidate | None:
     else:
         title = _first(row, "title", default="")
 
-    category = category_for_subreddit(subreddit_name)
+    subreddit_out = subreddit_name or (str(_first(row, "community_name", "subreddit", default="")).lstrip("r/") or None)
     return Candidate(
         source="reddit",
         source_id=str(post_id),
@@ -198,59 +209,59 @@ def _candidate_from_row(row: dict, subreddit_name: str) -> Candidate | None:
         category=category,
         title=title,
         author=str(_first(row, "author", "username", default="")),
-        subreddit=subreddit_name,
+        subreddit=subreddit_out,
         score=_to_float(_first(row, "num_upvotes", "score", "upvotes", default=0)),
+        likes=_to_float(_first(row, "num_upvotes", "score", "upvotes", default=0)),
+        comments=_to_float(_first(row, "num_comments", "comments", default=0)),
+        shares=0.0,  # Reddit doesn't expose a share count
         published_at=_parse_datetime(_first(row, "date_posted", "created_time", "created_at")),
     )
 
 
-def _gather_from_subreddits(subreddit_names: list[str]) -> list[Candidate]:
-    if not subreddit_names:
+def _gather_from_terms(term_category_pairs: list[tuple[str, str]]) -> list[Candidate]:
+    """One Bright Data keyword-search input per (term, category) pair, hot-sorted.
+    Bright Data doesn't guarantee it echoes our input keyword back per row, so
+    results are matched to a category via the dataset's own keyword-echo field
+    when present, falling back to the first term's category otherwise."""
+    if not term_category_pairs:
         return []
-    inputs = [
-        {"url": f"https://www.reddit.com/r/{name}/"}
-        for name in subreddit_names
-    ]
+    inputs = [{"keyword": term, "sort_by": "hot"} for term, _ in term_category_pairs]
     rows = run_collection(config.BRIGHTDATA_REDDIT_DATASET_ID, inputs)
 
-    by_subreddit: dict[str, str] = {name.lower(): name for name in subreddit_names}
+    keyword_to_category = {term: cat for term, cat in term_category_pairs}
+    fallback_category = term_category_pairs[0][1]
     candidates = []
     seen_ids: set[str] = set()
     for row in rows:
-        subreddit_raw = _first(row, "community_name", "subreddit", "community")
-        name = by_subreddit.get(str(subreddit_raw).lstrip("r/").lower()) if subreddit_raw else None
-        if name is None:
-            # Fall back to whichever subreddit this row's permalink names, if the
-            # dataset didn't echo back a clean community_name field.
-            permalink = str(_first(row, "url", "post_url", "permalink", default=""))
-            parts = permalink.split("/r/", 1)
-            guess = parts[1].split("/", 1)[0] if len(parts) > 1 else None
-            name = by_subreddit.get((guess or "").lower(), guess)
-        if not name:
-            continue
-
         post_id = _first(row, "post_id", "id")
-        if post_id in seen_ids:
+        if not post_id or post_id in seen_ids:
             continue
         seen_ids.add(post_id)
 
-        candidate = _candidate_from_row(row, name)
+        keyword = _first(row, "input_keyword", "keyword", "search_query", "query")
+        category = keyword_to_category.get(keyword, fallback_category)
+        subreddit_raw = _first(row, "community_name", "subreddit", "community")
+        subreddit_name = str(subreddit_raw).lstrip("r/") if subreddit_raw else None
+
+        candidate = _candidate_from_row(row, subreddit_name, category)
         if candidate:
             candidates.append(candidate)
     return candidates
 
 
 def gather_candidates() -> list[Candidate]:
-    """Pull hot posts from every curated subreddit in one Bright Data collection run (hourly job)."""
-    all_subreddits = list_all_subreddits()
-    candidates = _gather_from_subreddits(all_subreddits)
-    log.info("Reddit: gathered %d candidates across %d subreddits", len(candidates), len(all_subreddits))
+    """Pull hot (trending) posts for every unified search term in one Bright Data collection run (hourly job)."""
+    terms = search_terms_module.all_terms_with_categories()
+    pairs = [(t["term"], t["category"]) for t in terms]
+    candidates = _gather_from_terms(pairs)
+    log.info("Reddit: gathered %d candidates across %d search terms", len(candidates), len(pairs))
     return candidates
 
 
 def gather_for_category(category: str) -> list[Candidate]:
-    """Pull hot posts from just one category's subreddits (manual test-snapshot button)."""
-    names = subreddits_for_category(category)
-    candidates = _gather_from_subreddits(names)
-    log.info("Reddit: gathered %d candidates for category=%s (%d subreddits)", len(candidates), category, len(names))
+    """Pull hot posts using just one category's search terms (manual test-snapshot button)."""
+    terms = search_terms_module.terms_for_category(category)
+    pairs = [(term, category) for term in terms]
+    candidates = _gather_from_terms(pairs)
+    log.info("Reddit: gathered %d candidates for category=%s (%d terms)", len(candidates), category, len(terms))
     return candidates
