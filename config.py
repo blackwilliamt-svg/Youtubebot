@@ -116,6 +116,17 @@ FRAME_DIFF_THRESHOLD = float(os.environ.get("FRAME_DIFF_THRESHOLD", "12.0"))  # 
 # frames into the tagging prompt -- "small"/"medium" run fine on CPU.
 WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "small")
 
+# --- search-term rotation (Bright Data credit cap) -------------------------
+# How many search terms each source sends per hourly run. Bright Data bills
+# per RECORD RETURNED, not per video we end up downloading, so fanning the
+# whole search-term list out to every platform every hour is what actually
+# burns credits -- not the 1-video-per-platform download target. At the
+# default of 1, each source sends a single keyword search per run and walks
+# the list round-robin (scraper/search_terms.rotating_terms), so the full
+# list still gets covered over time: 3 searches/hour total, ~2,160/month.
+# Raise this for faster coverage at proportionally higher credit cost.
+SEARCH_TERMS_PER_RUN = int(os.environ.get("SEARCH_TERMS_PER_RUN", "1"))
+
 # --- adaptive search-parameter system ---------------------------------
 # Flat vote count (not "every N") at which a tag/subreddit gets auto
 # added (3 likes) or auto removed (3 dislikes) from the search-parameter

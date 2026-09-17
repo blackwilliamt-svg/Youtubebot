@@ -17,6 +17,9 @@ directly) instead.
 Deliberately broad on purpose -- scraper/adaptive.py prunes/grows this
 list over time based on triage keep/reject votes (config.ADAPTIVE_VOTE_THRESHOLD).
 """
+import zlib
+
+import config
 import db
 from scraper.subreddits import CATEGORIES
 
@@ -79,6 +82,49 @@ def all_terms_with_categories() -> list[dict]:
 def terms_for_category(category: str) -> list[str]:
     _ensure_seeded()
     return db.list_search_terms(category=category)
+
+
+def rotating_terms(source: str, count: int | None = None) -> list[dict]:
+    """The next `count` terms (default config.SEARCH_TERMS_PER_RUN) for
+    `source`, walking the list round-robin so every term gets its turn
+    over successive runs instead of the whole list being searched every
+    hour. Returns [{term, category, added_at}, ...].
+
+    Each source keeps its own cursor in the `settings` table, because the
+    hourly job is a fresh process every run (systemd oneshot) -- there's
+    no in-memory state to rotate. The cursor is taken modulo the current
+    list length on both read and write, so terms being added or removed
+    (by you, or by the adaptive system) can never park it out of range.
+
+    This is the Bright Data credit cap: at count=1 a source sends exactly
+    one keyword search per run. See config.SEARCH_TERMS_PER_RUN.
+    """
+    count = config.SEARCH_TERMS_PER_RUN if count is None else count
+    terms = all_terms_with_categories()
+    if not terms or count <= 0:
+        return []
+    count = min(count, len(terms))
+
+    key = f"search_term_cursor_{source}"
+    stored = db.get_setting_value(key)
+    if stored is None:
+        # First run for this source: start it at a stable, source-specific
+        # offset rather than 0, so the three platforms don't all walk the
+        # list in lockstep and search the identical term every hour (the
+        # list is ordered by category, so lockstep would also mean all
+        # three sit in the same category for hours at a time). crc32 rather
+        # than hash() because Python randomizes str hashing per process.
+        start = zlib.crc32(source.encode("utf-8")) % len(terms)
+    else:
+        try:
+            start = int(stored)
+        except ValueError:
+            start = 0
+    start %= len(terms)
+
+    selected = [terms[(start + i) % len(terms)] for i in range(count)]
+    db.set_setting(key, str((start + count) % len(terms)))
+    return selected
 
 
 def add_term(term: str, category: str) -> str:

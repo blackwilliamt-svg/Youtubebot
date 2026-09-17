@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 import config
 from scraper.brightdata_client import run_collection
 from scraper.candidate import Candidate
+from scraper import search_terms as search_terms_module
 from scraper.search_terms import terms_for_category
 
 log = logging.getLogger("meme_pipeline.tiktok")
@@ -135,11 +136,14 @@ def _run_batch(inputs: list[dict]) -> list[dict]:
 
 
 def _inputs_for_category(category: str, query: str | None) -> list[tuple[dict, str]]:
-    """[(bright-data-input, category), ...] for one category's query + its curated hashtags."""
+    """[(bright-data-input, category), ...] for one category's query plus a
+    capped slice of that category's search terms. Used by the manual
+    test-snapshot path -- capped the same way the hourly path is, so one
+    button press can't fan out the whole list across every category."""
     pairs = []
     if query:
         pairs.append(({"keyword": query}, category))
-    for term in terms_for_category(category):
+    for term in terms_for_category(category)[: config.SEARCH_TERMS_PER_RUN]:
         pairs.append(({"keyword": term}, category))
     return pairs
 
@@ -148,6 +152,11 @@ def _gather(category_query_pairs: list[tuple[str, str | None]]) -> list[Candidat
     input_pairs: list[tuple[dict, str]] = []
     for category, query in category_query_pairs:
         input_pairs += _inputs_for_category(category, query)
+    return _gather_inputs(input_pairs)
+
+
+def _gather_inputs(input_pairs: list[tuple[dict, str]]) -> list[Candidate]:
+    """Runs one collection over already-built [(input, category), ...] pairs."""
     if not input_pairs:
         return []
 
@@ -171,12 +180,24 @@ def _gather(category_query_pairs: list[tuple[str, str | None]]) -> list[Candidat
 
 
 def gather_candidates() -> list[Candidate]:
-    """Hourly job: trending query per mapped category + one hour-rotated category's query+hashtags."""
-    pairs = [(cat, q) for cat, q in TRENDING_QUERY_BY_CATEGORY.items()]
-    rotated_query, rotated_category = SEARCH_QUERIES[datetime.now(timezone.utc).hour % len(SEARCH_QUERIES)]
-    pairs.append((rotated_category, rotated_query))
-    candidates = _gather(pairs)
-    log.info("TikTok: gathered %d candidates", len(candidates))
+    """Hourly job: this run's rotating slice of the unified search-term list
+    (config.SEARCH_TERMS_PER_RUN terms, default 1).
+
+    This used to fan out a "trending <category>" query for every category
+    PLUS an hour-rotated category's full hashtag list -- ~48 keyword inputs
+    per run, which is what actually consumes Bright Data credits (they're
+    billed per record returned, not per video we download). The built-in
+    queries below are now only a fallback for when the search-term list is
+    empty, so a freshly-pruned list doesn't leave this source doing nothing.
+    """
+    terms = search_terms_module.rotating_terms("tiktok")
+    if terms:
+        input_pairs = [({"keyword": t["term"]}, t["category"]) for t in terms]
+    else:
+        query, category = SEARCH_QUERIES[datetime.now(timezone.utc).hour % len(SEARCH_QUERIES)]
+        input_pairs = [({"keyword": query}, category)]
+    candidates = _gather_inputs(input_pairs)
+    log.info("TikTok: gathered %d candidates from %d rotated search term(s)", len(candidates), len(input_pairs))
     return candidates
 
 

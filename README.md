@@ -22,6 +22,10 @@ all running unattended on a 2GB DigitalOcean droplet.
 - **Adaptive system** (`scraper/adaptive.py`): a tag or a Reddit
   subreddit-of-origin crossing 3 liked (or disliked) clips in Triage gets
   auto-added to (or removed from) the search-parameter list.
+- **Bright Data credit cap**: each source searches only
+  `SEARCH_TERMS_PER_RUN` rotated terms per run (default 1), rather than
+  fanning the whole list out to every platform every hour -- see the
+  credit note under "How it fits together".
 - **Content focus**: three open-ended categories now --
   `funny-viral` / `fails` / `political-satire` (animal/cute and gaming
   are de-emphasized) -- with an open freeform tagging system
@@ -56,17 +60,30 @@ All three sources read the same unified search-term list
 (`scraper/search_terms.py` -> the `search_terms` DB table, editable at
 `/search-parameters`).
 
+**On Bright Data credits:** they're billed per *record returned*, not per
+video that actually gets downloaded -- so what drives spend is how many
+keyword searches get fired, not the 1-video-per-platform pull target.
+Each source therefore sends only `SEARCH_TERMS_PER_RUN` terms per run
+(default **1**), walking the shared list round-robin with a per-source
+cursor so the whole list still gets covered over successive hours. That's
+**3 searches/hour, ~2,160/month**. Sending the full list to every platform
+every hour instead would be ~93 searches/hour (~67k/month), which would
+blow through the 5,000-credit free tier many times over. Raise
+`SEARCH_TERMS_PER_RUN` for faster list coverage at proportionally higher
+cost. The manual "Run Test Snapshot" button is capped by the same knob.
+
 ```
 scraper/run_hourly.py   systemd timer, hourly -- pulls ONE video per platform
+  │                     (each source searches SEARCH_TERMS_PER_RUN rotated
+  │                      terms, default 1 -- see the credit note above)
   ├─ reddit_source.py     Bright Data Reddit Scraper API, keyword search
-  │                       (one input per search term, sorted "hot"),
-  │                       classifies each post as video / image / gif
-  ├─ tiktok_source.py     Bright Data TikTok Scraper API: a trending query
-  │                       per category + 1 hour-rotated category query,
-  │                       plus that category's search terms (video only)
+  │                       sorted "hot", classifies each post as
+  │                       video / image / gif
+  ├─ tiktok_source.py     Bright Data TikTok Scraper API, keyword search
+  │                       (built-in trending queries are a fallback for
+  │                       when the term list is empty) -- video only
   ├─ instagram_source.py  Bright Data Instagram Scraper API, reels-only
-  │                       keyword search: hour-rotated query + that
-  │                       category's search terms (video only)
+  │                       keyword search (same fallback) -- video only
   └─ rank.py               per platform, picks the highest "velocity"
        candidate (engagement / hours-since-posted) not pulled in the last 24h
      -> downloader.py: yt-dlp for video, plain HTTP for image/gif,

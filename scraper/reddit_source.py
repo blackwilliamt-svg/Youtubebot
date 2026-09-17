@@ -250,17 +250,24 @@ def _gather_from_terms(term_category_pairs: list[tuple[str, str]]) -> list[Candi
 
 
 def gather_candidates() -> list[Candidate]:
-    """Pull hot (trending) posts for every unified search term in one Bright Data collection run (hourly job)."""
-    terms = search_terms_module.all_terms_with_categories()
+    """Hourly job: pull hot (trending) posts for this run's rotating slice of
+    the unified search-term list (config.SEARCH_TERMS_PER_RUN terms, default
+    1 -- the Bright Data credit cap; the list is walked round-robin so every
+    term still gets covered over successive runs)."""
+    terms = search_terms_module.rotating_terms("reddit")
     pairs = [(t["term"], t["category"]) for t in terms]
     candidates = _gather_from_terms(pairs)
-    log.info("Reddit: gathered %d candidates across %d search terms", len(candidates), len(pairs))
+    log.info("Reddit: gathered %d candidates from %d rotated search term(s): %s",
+              len(candidates), len(pairs), ", ".join(repr(t) for t, _ in pairs) or "none")
     return candidates
 
 
 def gather_for_category(category: str) -> list[Candidate]:
-    """Pull hot posts using just one category's search terms (manual test-snapshot button)."""
-    terms = search_terms_module.terms_for_category(category)
+    """Manual test-snapshot: hot posts for a capped slice of one category's
+    search terms -- capped the same way the hourly path is
+    (config.SEARCH_TERMS_PER_RUN), so one button press can't fan the whole
+    list out across every category."""
+    terms = search_terms_module.terms_for_category(category)[: config.SEARCH_TERMS_PER_RUN]
     pairs = [(term, category) for term in terms]
     candidates = _gather_from_terms(pairs)
     log.info("Reddit: gathered %d candidates for category=%s (%d terms)", len(candidates), category, len(terms))

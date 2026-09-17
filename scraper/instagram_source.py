@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 import config
 from scraper.brightdata_client import run_collection
 from scraper.candidate import Candidate
+from scraper import search_terms as search_terms_module
 from scraper.search_terms import terms_for_category
 
 log = logging.getLogger("meme_pipeline.instagram")
@@ -123,14 +124,30 @@ def _search(queries: list[str], category: str) -> list[Candidate]:
 
 
 def gather_candidates() -> list[Candidate]:
-    """Hourly job: the hour-rotated built-in query plus that category's
-    terms from the unified Search Parameters list."""
+    """Hourly job: this run's rotating slice of the unified search-term list
+    (config.SEARCH_TERMS_PER_RUN terms, default 1 -- the Bright Data credit
+    cap). The built-in rotated query below is only a fallback for when that
+    list is empty, so a freshly-pruned list doesn't leave this source idle."""
+    terms = search_terms_module.rotating_terms("instagram")
+    if terms:
+        # One collection run per category present in the slice, so each
+        # candidate is attributed to the category of the term that found it.
+        candidates = []
+        by_category: dict[str, list[str]] = {}
+        for t in terms:
+            by_category.setdefault(t["category"], []).append(t["term"])
+        for category, queries in by_category.items():
+            candidates += _search(queries, category)
+        return candidates
+
     query, category = SEARCH_QUERIES[datetime.now(timezone.utc).hour % len(SEARCH_QUERIES)]
-    return _search([query] + terms_for_category(category), category)
+    return _search([query], category)
 
 
 def gather_for_category(category: str) -> list[Candidate]:
     """Manual test-snapshot: this category's built-in query (if it has one)
-    plus its unified search terms, regardless of the hour."""
+    plus a capped slice of its unified search terms -- capped the same way
+    the hourly path is, so one button press can't fan out the whole list."""
     query = QUERY_BY_CATEGORY.get(category)
-    return _search(([query] if query else []) + terms_for_category(category), category)
+    terms = terms_for_category(category)[: config.SEARCH_TERMS_PER_RUN]
+    return _search(([query] if query else []) + terms, category)
