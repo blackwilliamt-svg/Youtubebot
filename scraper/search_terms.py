@@ -96,8 +96,10 @@ def rotating_terms(source: str, count: int | None = None) -> list[dict]:
     list length on both read and write, so terms being added or removed
     (by you, or by the adaptive system) can never park it out of range.
 
-    This is the Bright Data credit cap: at count=1 a source sends exactly
-    one keyword search per run. See config.SEARCH_TERMS_PER_RUN.
+    This is one of two Bright Data credit-cost levers (the other is
+    BRIGHTDATA_LIMIT_PER_INPUT, which caps records returned per keyword --
+    see scraper/brightdata_client.py): at count=2 a source sends exactly
+    2 keyword searches per run. See config.SEARCH_TERMS_PER_RUN.
     """
     count = config.SEARCH_TERMS_PER_RUN if count is None else count
     terms = all_terms_with_categories()

@@ -252,8 +252,9 @@ def _gather_from_terms(term_category_pairs: list[tuple[str, str]]) -> list[Candi
 def gather_candidates() -> list[Candidate]:
     """Hourly job: pull hot (trending) posts for this run's rotating slice of
     the unified search-term list (config.SEARCH_TERMS_PER_RUN terms, default
-    1 -- the Bright Data credit cap; the list is walked round-robin so every
-    term still gets covered over successive runs)."""
+    2 -- one of two Bright Data credit-cost levers, the other being
+    BRIGHTDATA_LIMIT_PER_INPUT; the list is walked round-robin so every term
+    still gets covered over successive runs)."""
     terms = search_terms_module.rotating_terms("reddit")
     pairs = [(t["term"], t["category"]) for t in terms]
     candidates = _gather_from_terms(pairs)

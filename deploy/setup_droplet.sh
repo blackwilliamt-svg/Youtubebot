@@ -91,6 +91,15 @@ or 'autonomous'; see autonomy.py):
    cp deploy/meme-autobuild.timer /etc/systemd/system/meme-autobuild.timer
    systemctl daemon-reload && systemctl enable --now meme-autobuild.timer
 
+Optional weekly feedback-loop batch build (scraper/weekly_review.py --
+surfaces a curated batch of clips, including the bot's own top picks, for
+a deliberate vote once a week at /weekly-review; runs at any autonomy
+level):
+   sed "s#__APP_DIR__#$APP_DIR#g; s#__APP_USER__#$APP_USER#g" \\
+     deploy/meme-weekly-review.service.template > /etc/systemd/system/meme-weekly-review.service
+   cp deploy/meme-weekly-review.timer /etc/systemd/system/meme-weekly-review.timer
+   systemctl daemon-reload && systemctl enable --now meme-weekly-review.timer
+
 REQUIRED for the freeform tagging analyzer (analyzer/) to produce any
 tags at all -- it calls a LOCAL vision model via Ollama, which this
 script does NOT install (a CPU-only vision model is a heavy, optional

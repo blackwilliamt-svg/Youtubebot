@@ -22,10 +22,19 @@ all running unattended on a 2GB DigitalOcean droplet.
 - **Adaptive system** (`scraper/adaptive.py`): a tag or a Reddit
   subreddit-of-origin crossing 3 liked (or disliked) clips in Triage gets
   auto-added to (or removed from) the search-parameter list.
-- **Bright Data credit cap**: each source searches only
-  `SEARCH_TERMS_PER_RUN` rotated terms per run (default 1), rather than
-  fanning the whole list out to every platform every hour -- see the
-  credit note under "How it fits together".
+- **Bright Data credit cap**: two levers, both on by default -- each
+  source searches only `SEARCH_TERMS_PER_RUN` rotated terms per run
+  (default 2/platform) instead of fanning the whole list out every hour,
+  and every trigger caps results per keyword via the verified
+  `limit_per_input` param (`BRIGHTDATA_LIMIT_PER_INPUT`, default 1). See
+  the credit note under "How it fits together".
+- **Weekly feedback loop** (`scraper/weekly_review.py`, `/weekly-review`):
+  once a week, surfaces a curated batch of the bot's own top-ranked
+  clips (plus some fill) for you to vote on. Those votes count for more
+  than an ordinary Triage keep/reject in both the adaptive system and
+  the engagement score -- and a downvote on a clip the bot flagged as
+  one of its top picks (a real disagreement, not routine feedback)
+  counts for the most of all.
 - **Content focus**: three open-ended categories now --
   `funny-viral` / `fails` / `political-satire` (animal/cute and gaming
   are de-emphasized) -- with an open freeform tagging system
@@ -60,22 +69,35 @@ All three sources read the same unified search-term list
 (`scraper/search_terms.py` -> the `search_terms` DB table, editable at
 `/search-parameters`).
 
-**On Bright Data credits:** they're billed per *record returned*, not per
-video that actually gets downloaded -- so what drives spend is how many
-keyword searches get fired, not the 1-video-per-platform pull target.
-Each source therefore sends only `SEARCH_TERMS_PER_RUN` terms per run
-(default **1**), walking the shared list round-robin with a per-source
-cursor so the whole list still gets covered over successive hours. That's
-**3 searches/hour, ~2,160/month**. Sending the full list to every platform
-every hour instead would be ~93 searches/hour (~67k/month), which would
-blow through the 5,000-credit free tier many times over. Raise
-`SEARCH_TERMS_PER_RUN` for faster list coverage at proportionally higher
-cost. The manual "Run Test Snapshot" button is capped by the same knob.
+**On Bright Data credits:** they're billed per *record delivered*, not per
+keyword or per API call -- two keywords in one trigger call that each
+return 10 rows is 20 credits, not "2 searches' worth". Two levers control
+spend, both applied by default:
+
+1. **How many keywords get searched per run.** Each source sends only
+   `SEARCH_TERMS_PER_RUN` terms per run (default **2**/platform), walking
+   the shared list round-robin with a per-source cursor (`settings` table)
+   so the whole list still gets covered over successive runs rather than
+   the same handful every time. That's 6 keyword searches/hour across all
+   three platforms.
+2. **How many records come back per keyword.** Every trigger call passes
+   Bright Data's own `limit_per_input` query param (`BRIGHTDATA_LIMIT_PER_INPUT`,
+   default **1**) -- verified against
+   [Bright Data's trigger-collection docs](https://docs.brightdata.com/api-reference/rest-api/scraper/trigger-collection),
+   not guessed.
+
+At the defaults: 2 terms x 3 platforms x 1 record x 24 runs/day x 30 days
+= **~4,320 credits/month** -- between the 3,000/month target and Bright
+Data's 5,000/month free-tier ceiling. Sending the full ~27-term list to
+every platform every hour with no per-record cap, by contrast, would be
+tens of thousands of records/month. Raise either knob for more
+coverage/data at proportionally higher cost. The manual "Run Test
+Snapshot" button is capped by the same `SEARCH_TERMS_PER_RUN` knob.
 
 ```
 scraper/run_hourly.py   systemd timer, hourly -- pulls ONE video per platform
   │                     (each source searches SEARCH_TERMS_PER_RUN rotated
-  │                      terms, default 1 -- see the credit note above)
+  │                      terms, default 2 -- see the credit note above)
   ├─ reddit_source.py     Bright Data Reddit Scraper API, keyword search
   │                       sorted "hot", classifies each post as
   │                       video / image / gif
@@ -123,6 +145,9 @@ app.py (Flask, gunicorn)      dashboard, bound to 127.0.0.1:8080 only
   │                            searches (plus the adaptive "preferred
   │                            subreddits" origin list) -- writes through
   │                            to DB tables, not the hardcoded seed dicts
+  ├─ /weekly-review            once-a-week curated batch (scraper/weekly_review.py)
+  │                            of the bot's own top-ranked picks + fill, for a
+  │                            deliberate vote weighted heavier than /triage
   ├─ /settings                 API credentials + the clip-selection
   │                            autonomy dial (manual/assisted/autonomous)
   ├─ /stats                    read-only /triage keep/reject approval

@@ -125,9 +125,10 @@ def _search(queries: list[str], category: str) -> list[Candidate]:
 
 def gather_candidates() -> list[Candidate]:
     """Hourly job: this run's rotating slice of the unified search-term list
-    (config.SEARCH_TERMS_PER_RUN terms, default 1 -- the Bright Data credit
-    cap). The built-in rotated query below is only a fallback for when that
-    list is empty, so a freshly-pruned list doesn't leave this source idle."""
+    (config.SEARCH_TERMS_PER_RUN terms, default 2 -- one of two Bright Data
+    credit-cost levers, the other being BRIGHTDATA_LIMIT_PER_INPUT). The
+    built-in rotated query below is only a fallback for when that list is
+    empty, so a freshly-pruned list doesn't leave this source idle."""
     terms = search_terms_module.rotating_terms("instagram")
     if terms:
         # One collection run per category present in the slice, so each

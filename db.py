@@ -99,6 +99,7 @@ def _migrate():
             ("engagement_score", "ALTER TABLE clips ADD COLUMN engagement_score REAL"),
             ("tags", "ALTER TABLE clips ADD COLUMN tags TEXT"),
             ("transcript", "ALTER TABLE clips ADD COLUMN transcript TEXT"),
+            ("feedback_score", "ALTER TABLE clips ADD COLUMN feedback_score REAL NOT NULL DEFAULT 0"),
         ):
             if col not in existing:
                 conn.execute(ddl)
@@ -593,29 +594,142 @@ def delete_search_term(term: str) -> None:
 
 # --- adaptive vote tracking (scraper/adaptive.py) --------------------------
 
-def bump_tag_vote(tag: str, category: str | None, liked: bool) -> tuple[int, int]:
-    """Increments a tag's like or dislike counter and returns (likes, dislikes)."""
+def bump_tag_vote(tag: str, category: str | None, liked: bool, weight: int = 1) -> tuple[int, int]:
+    """Increments a tag's like or dislike counter by `weight` (default 1 for
+    an ordinary /triage vote; weekly-review votes pass a larger weight --
+    see config.WEEKLY_REVIEW_VOTE_WEIGHT/WEEKLY_REVIEW_DIVERGENCE_WEIGHT and
+    scraper/adaptive.py) and returns (likes, dislikes)."""
+    weight = max(1, int(weight))
     col = "likes" if liked else "dislikes"
     with get_conn() as conn:
         conn.execute(
-            f"INSERT INTO tag_votes (tag, category, likes, dislikes) VALUES (?, ?, {1 if liked else 0}, {0 if liked else 1}) "
-            f"ON CONFLICT(tag) DO UPDATE SET {col} = {col} + 1, category = excluded.category",
+            f"INSERT INTO tag_votes (tag, category, likes, dislikes) VALUES (?, ?, {weight if liked else 0}, {0 if liked else weight}) "
+            f"ON CONFLICT(tag) DO UPDATE SET {col} = {col} + {weight}, category = excluded.category",
             (tag, category),
         )
         row = conn.execute("SELECT likes, dislikes FROM tag_votes WHERE tag = ?", (tag,)).fetchone()
     return (row["likes"], row["dislikes"]) if row else (0, 0)
 
 
-def bump_subreddit_vote(name: str, liked: bool) -> tuple[int, int]:
+def bump_subreddit_vote(name: str, liked: bool, weight: int = 1) -> tuple[int, int]:
+    weight = max(1, int(weight))
     col = "likes" if liked else "dislikes"
     with get_conn() as conn:
         conn.execute(
-            f"INSERT INTO subreddit_votes (name, likes, dislikes) VALUES (?, {1 if liked else 0}, {0 if liked else 1}) "
-            f"ON CONFLICT(name) DO UPDATE SET {col} = {col} + 1",
+            f"INSERT INTO subreddit_votes (name, likes, dislikes) VALUES (?, {weight if liked else 0}, {0 if liked else weight}) "
+            f"ON CONFLICT(name) DO UPDATE SET {col} = {col} + {weight}",
             (name,),
         )
         row = conn.execute("SELECT likes, dislikes FROM subreddit_votes WHERE name = ?", (name,)).fetchone()
     return (row["likes"], row["dislikes"]) if row else (0, 0)
+
+
+def set_clip_feedback_score(clip_id: int, feedback_score: float) -> None:
+    with get_conn() as conn:
+        conn.execute("UPDATE clips SET feedback_score = ? WHERE id = ?", (feedback_score, clip_id))
+
+
+def get_top_clips_by_engagement(since_iso: str, limit: int) -> list[dict]:
+    """Clips fetched since `since_iso`, ordered by engagement_score desc --
+    used by scraper/weekly_review.py to pick the bot's "hottest" picks of
+    the week. NULL engagement_score sorts last."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM clips WHERE fetched_at >= ? "
+            "ORDER BY (engagement_score IS NULL), engagement_score DESC "
+            "LIMIT ?",
+            (since_iso, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_recent_clips_excluding(since_iso: str, exclude_ids: list[int], limit: int) -> list[dict]:
+    """Fill-in candidates for a weekly review batch: other clips from the
+    same window not already selected as a top pick."""
+    exclude_ids = exclude_ids or [-1]
+    placeholders = ",".join("?" for _ in exclude_ids)
+    with get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM clips WHERE fetched_at >= ? AND id NOT IN ({placeholders}) "
+            f"ORDER BY (engagement_score IS NULL), engagement_score DESC LIMIT ?",
+            (since_iso, *exclude_ids, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def create_weekly_review_batch(week_label: str, items: list[dict]) -> int:
+    """items: [{"clip_id": int, "is_top_pick": bool}, ...]. Returns the new
+    batch id."""
+    now = utcnow_iso()
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO weekly_review_batches (created_at, week_label) VALUES (?, ?)",
+            (now, week_label),
+        )
+        batch_id = cur.lastrowid
+        for item in items:
+            conn.execute(
+                "INSERT OR IGNORE INTO weekly_review_items (batch_id, clip_id, is_top_pick) VALUES (?, ?, ?)",
+                (batch_id, item["clip_id"], 1 if item.get("is_top_pick") else 0),
+            )
+    return batch_id
+
+
+def count_pending_weekly_review_items() -> int:
+    """Un-voted items in the latest weekly review batch, for the nav badge."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM weekly_review_items "
+            "WHERE vote IS NULL AND batch_id = ("
+            "  SELECT id FROM weekly_review_batches ORDER BY id DESC LIMIT 1"
+            ")"
+        ).fetchone()
+    return row["n"] if row else 0
+
+
+def get_latest_weekly_review_batch() -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM weekly_review_batches ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_weekly_review_batch(batch_id: int) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM weekly_review_batches WHERE id = ?", (batch_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def get_weekly_review_items(batch_id: int) -> list[dict]:
+    """Items joined with their clip data, for rendering the review page."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT wri.*, c.title AS clip_title, c.source AS clip_source, "
+            "c.category AS clip_category, c.file_path AS clip_file_path, "
+            "c.thumb_path AS clip_thumb_path, c.tags AS clip_tags, "
+            "c.engagement_score AS clip_engagement_score "
+            "FROM weekly_review_items wri "
+            "JOIN clips c ON c.id = wri.clip_id "
+            "WHERE wri.batch_id = ? "
+            "ORDER BY wri.is_top_pick DESC, wri.id ASC",
+            (batch_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_weekly_review_item(item_id: int) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM weekly_review_items WHERE id = ?", (item_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def record_weekly_review_vote(item_id: int, vote: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE weekly_review_items SET vote = ?, voted_at = ? WHERE id = ?",
+            (vote, utcnow_iso(), item_id),
+        )
 
 
 # --- engagement scoring (scraper/engagement.py) ----------------------------

@@ -15,6 +15,7 @@
     <a href="{{ url_for('build_screen') }}">Build</a>
     <a href="{{ url_for('compilations') }}">Compilations</a>
     <a href="{{ url_for('search_parameters') }}">Search Parameters</a>
+    <a href="{{ url_for('weekly_review_page') }}">Weekly Review{% if weekly_review_pending %} <span class="nav-badge">{{ weekly_review_pending }}</span>{% endif %}</a>
     <a href="{{ url_for('stats_page') }}">Stats</a>
     <a href="{{ url_for('settings_page') }}">Settings</a>
     <a href="{{ url_for('account_page') }}">Account</a>

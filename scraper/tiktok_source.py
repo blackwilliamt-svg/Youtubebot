@@ -181,13 +181,14 @@ def _gather_inputs(input_pairs: list[tuple[dict, str]]) -> list[Candidate]:
 
 def gather_candidates() -> list[Candidate]:
     """Hourly job: this run's rotating slice of the unified search-term list
-    (config.SEARCH_TERMS_PER_RUN terms, default 1).
+    (config.SEARCH_TERMS_PER_RUN terms, default 2).
 
     This used to fan out a "trending <category>" query for every category
     PLUS an hour-rotated category's full hashtag list -- ~48 keyword inputs
-    per run, which is what actually consumes Bright Data credits (they're
-    billed per record returned, not per video we download). The built-in
-    queries below are now only a fallback for when the search-term list is
+    per run, which is what actually drives Bright Data credit spend (they're
+    billed per record delivered, not per video we download -- see
+    scraper/brightdata_client.py). The built-in queries below are now only a
+    fallback for when the search-term list is
     empty, so a freshly-pruned list doesn't leave this source doing nothing.
     """
     terms = search_terms_module.rotating_terms("tiktok")

@@ -13,6 +13,12 @@ round trip, rather than one call per item.
 
 Auth is a single bearer token (BRIGHTDATA_API_KEY) shared across every
 dataset -- only the dataset id (and the input shape) differs per source.
+
+Every trigger defaults to config.BRIGHTDATA_LIMIT_PER_INPUT (the verified
+`limit_per_input` query param) capping records returned per keyword --
+see trigger_collection()'s docstring. That's the actual credit-cost lever;
+scraper/search_terms.rotating_terms() (how many keywords get searched per
+run) is the other one.
 """
 import logging
 import time
@@ -52,10 +58,23 @@ def _request(method, path, **kwargs):
 
 
 def trigger_collection(dataset_id: str, inputs: list[dict], extra_params: dict | None = None) -> str:
-    """Kicks off a collection run for `inputs` against `dataset_id`. Returns the snapshot id."""
+    """Kicks off a collection run for `inputs` against `dataset_id`. Returns the snapshot id.
+
+    Applies config.BRIGHTDATA_LIMIT_PER_INPUT as the trigger endpoint's own
+    `limit_per_input` query param by default -- this is the direct credit-cost
+    lever (Bright Data bills per record delivered, not per keyword or per API
+    call: two keywords each returning 10 rows is 20 credits, regardless of how
+    many keywords were batched into the one trigger call). Set to 0/None (or
+    pass extra_params={"limit_per_input": None} to override per-call) to fetch
+    everything a keyword returns -- fine for a one-off manual pull, expensive
+    at hourly-run scale. See https://docs.brightdata.com/api-reference/rest-api/scraper/trigger-collection
+    """
     params = {"dataset_id": dataset_id, "include_errors": "true"}
+    if config.BRIGHTDATA_LIMIT_PER_INPUT:
+        params["limit_per_input"] = config.BRIGHTDATA_LIMIT_PER_INPUT
     if extra_params:
         params.update(extra_params)
+    params = {k: v for k, v in params.items() if v is not None}
     resp = _request("POST", "/trigger", params=params, json=inputs)
     data = resp.json()
     snapshot_id = data.get("snapshot_id") or data.get("id")

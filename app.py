@@ -37,6 +37,7 @@ from compiler.auto_build import AutoBuildError, build_auto_compilation
 from manual_import import ManualImportError, import_url
 from manual_upload import ManualUploadError, import_file
 from scraper import adaptive
+from scraper import weekly_review
 from scraper.snapshot import run_test_snapshot
 from scraper import search_terms as search_terms_module
 from scraper import subreddits as subreddits_module
@@ -69,9 +70,14 @@ def _inject_nav_counts():
     if not session.get("logged_in"):
         return {}
     try:
-        return {"untriaged_count": db.count_untriaged()}
+        untriaged = db.count_untriaged()
     except Exception:
-        return {"untriaged_count": 0}
+        untriaged = 0
+    try:
+        pending_review = db.count_pending_weekly_review_items()
+    except Exception:
+        pending_review = 0
+    return {"untriaged_count": untriaged, "weekly_review_pending": pending_review}
 
 
 # --- auth ------------------------------------------------------------------
@@ -704,6 +710,56 @@ def compilations_auto_build():
 
     threading.Thread(target=_worker, daemon=True).start()
     return redirect(url_for("job_status_page", job_id=job_id))
+
+
+@app.route("/weekly-review")
+@login_required
+def weekly_review_page():
+    """The current (latest) weekly review batch, if any -- a curated
+    keep/reject pass distinct from /triage, see scraper/weekly_review.py.
+    Voted-on items stay visible (greyed out in the template) so the user
+    can see the whole week's batch at a glance, not just what's left."""
+    batch = db.get_latest_weekly_review_batch()
+    items = []
+    if batch:
+        items = db.get_weekly_review_items(batch["id"])
+        for item in items:
+            item["video_rel"] = _media_rel(item.get("clip_file_path"))
+            item["thumb_rel"] = _media_rel(item.get("clip_thumb_path"))
+            item["tag_list"] = _parsed_tags({"tags": item.get("clip_tags")})
+    pending = sum(1 for i in items if not i.get("vote"))
+    return render_template("weekly_review.html", batch=batch, items=items, pending=pending)
+
+
+@app.route("/weekly-review/build", methods=["POST"])
+@login_required
+def weekly_review_build():
+    """Manual trigger for the same weekly batch-build
+    scraper/run_weekly_review.py runs on a schedule -- handy for testing,
+    or for kicking off this week's batch a little early. A no-op (returns
+    the existing batch) if this week's batch was already built."""
+    try:
+        batch_id = weekly_review.build_weekly_batch()
+        if batch_id:
+            flash("Weekly review batch is ready.", "success")
+        else:
+            flash("No clips available yet for a weekly review batch.", "error")
+    except Exception:
+        log.exception("Weekly review batch build failed")
+        flash("Failed to build the weekly review batch -- check server logs.", "error")
+    return redirect(url_for("weekly_review_page"))
+
+
+@app.route("/weekly-review/<int:item_id>/vote", methods=["POST"])
+@login_required
+def weekly_review_vote(item_id):
+    liked = request.form.get("vote") == "up"
+    try:
+        weekly_review.record_vote(item_id, liked)
+    except Exception:
+        log.exception("Weekly review vote failed for item id=%d", item_id)
+        flash("Couldn't record that vote -- check server logs.", "error")
+    return redirect(url_for("weekly_review_page"))
 
 
 _THUMBNAIL_EXTENSIONS = {".jpg", ".jpeg", ".png"}

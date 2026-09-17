@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS clips (
     engagement_score REAL,                             -- composite, per-platform z-score weighted (scraper/engagement.py)
     tags            TEXT,                               -- JSON list of freeform tags from the analyzer (analyzer/)
     transcript      TEXT,                               -- Whisper speech transcript, when the clip has audio
+    feedback_score  REAL    NOT NULL DEFAULT 0,          -- weighted human feedback (weekly review votes -- see
+                                                          -- scraper/weekly_review.py), folded into engagement_score
     UNIQUE(source, source_id),
     FOREIGN KEY (compilation_id) REFERENCES compilations(id)
 );
@@ -145,6 +147,35 @@ CREATE TABLE IF NOT EXISTS subreddit_votes (
     name            TEXT PRIMARY KEY,
     likes           INTEGER NOT NULL DEFAULT 0,
     dislikes        INTEGER NOT NULL DEFAULT 0
+);
+
+-- Weekly feedback loop (scraper/weekly_review.py, /weekly-review): once a
+-- week, a curated batch of 12-24 clips is surfaced for the user to vote
+-- on, deliberately including the bot's own top-ranked ("hottest") picks
+-- for that week rather than a purely random sample -- so the vote can be
+-- compared against what the bot already believed about each clip. Votes
+-- here count for more than an ordinary /triage keep/reject (see
+-- config.WEEKLY_REVIEW_VOTE_WEIGHT / WEEKLY_REVIEW_DIVERGENCE_WEIGHT and
+-- scraper/adaptive.py), because they're a deliberate, reflective sample
+-- rather than an in-the-moment first-pass filter.
+CREATE TABLE IF NOT EXISTS weekly_review_batches (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at      TEXT    NOT NULL,
+    week_label      TEXT    NOT NULL                   -- e.g. '2026-W38', for display/dedup
+);
+
+CREATE TABLE IF NOT EXISTS weekly_review_items (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_id        INTEGER NOT NULL,
+    clip_id         INTEGER NOT NULL,
+    is_top_pick     INTEGER NOT NULL DEFAULT 0,         -- 1 = one of the bot's self-identified top engagement picks
+                                                          -- that week; a vote disagreeing with this is the strongest
+                                                          -- signal (config.WEEKLY_REVIEW_DIVERGENCE_WEIGHT)
+    vote            TEXT,                                -- NULL (not yet voted) | 'up' | 'down'
+    voted_at        TEXT,
+    UNIQUE(batch_id, clip_id),
+    FOREIGN KEY (batch_id) REFERENCES weekly_review_batches(id),
+    FOREIGN KEY (clip_id) REFERENCES clips(id)
 );
 
 -- Per-source triage approval stats, updated on every /triage keep or

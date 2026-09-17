@@ -116,22 +116,57 @@ FRAME_DIFF_THRESHOLD = float(os.environ.get("FRAME_DIFF_THRESHOLD", "12.0"))  # 
 # frames into the tagging prompt -- "small"/"medium" run fine on CPU.
 WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "small")
 
-# --- search-term rotation (Bright Data credit cap) -------------------------
-# How many search terms each source sends per hourly run. Bright Data bills
-# per RECORD RETURNED, not per video we end up downloading, so fanning the
-# whole search-term list out to every platform every hour is what actually
-# burns credits -- not the 1-video-per-platform download target. At the
-# default of 1, each source sends a single keyword search per run and walks
-# the list round-robin (scraper/search_terms.rotating_terms), so the full
-# list still gets covered over time: 3 searches/hour total, ~2,160/month.
-# Raise this for faster coverage at proportionally higher credit cost.
-SEARCH_TERMS_PER_RUN = int(os.environ.get("SEARCH_TERMS_PER_RUN", "1"))
+# --- search-term rotation + per-input result cap (Bright Data credit cap) --
+# Bright Data bills per RECORD DELIVERED, not per keyword or per API call --
+# two keywords in one trigger call that each return 10 rows is 20 credits,
+# not "2 searches' worth". Two levers control spend, and both are applied:
+#
+#   1. How many search terms each source sends per run (this walks the
+#      unified list round-robin -- scraper/search_terms.rotating_terms --
+#      so the full list still gets covered over successive runs rather
+#      than always searching the same handful).
+#   2. How many records Bright Data returns per keyword (BRIGHTDATA_LIMIT_PER_INPUT,
+#      sent as the trigger endpoint's own `limit_per_input` query param --
+#      https://docs.brightdata.com/api-reference/rest-api/scraper/trigger-collection).
+#
+# At the defaults (2 terms/platform, 1 record/term): 2 x 3 platforms x 1
+# record x 24 runs/day x 30 days = ~4,320 credits/month -- between the
+# 3,000/month target and Bright Data's 5,000/month free-tier ceiling.
+SEARCH_TERMS_PER_RUN = int(os.environ.get("SEARCH_TERMS_PER_RUN", "2"))
+BRIGHTDATA_LIMIT_PER_INPUT = int(os.environ.get("BRIGHTDATA_LIMIT_PER_INPUT", "1"))
 
 # --- adaptive search-parameter system ---------------------------------
 # Flat vote count (not "every N") at which a tag/subreddit gets auto
 # added (3 likes) or auto removed (3 dislikes) from the search-parameter
 # list -- intentionally not 1, so a one-off viral outlier can't skew it.
+# An ordinary /triage keep/reject counts as 1 vote; a weekly-review vote
+# (below) counts for more, so it can cross this threshold on its own.
 ADAPTIVE_VOTE_THRESHOLD = int(os.environ.get("ADAPTIVE_VOTE_THRESHOLD", "3"))
+
+# --- weekly feedback loop (scraper/weekly_review.py, /weekly-review) -------
+# Once a week, a curated batch of clips is surfaced for a deliberate
+# up/down vote pass -- deliberately including the bot's own top-ranked
+# ("hottest") picks for that week, not a purely random sample, so the vote
+# can be compared against what the bot already believed. These votes are
+# weighted more heavily than an ordinary /triage keep/reject (weight 1) in
+# both the adaptive tag/subreddit system and the engagement score, because
+# they're a considered, reflective sample rather than an in-the-moment
+# first-pass filter -- and a downvote on one of the bot's own top picks
+# (a real disagreement, not routine feedback) is weighted heavier still.
+WEEKLY_REVIEW_BATCH_MIN = int(os.environ.get("WEEKLY_REVIEW_BATCH_MIN", "12"))
+WEEKLY_REVIEW_BATCH_MAX = int(os.environ.get("WEEKLY_REVIEW_BATCH_MAX", "24"))
+# At least this many of the batch are the bot's own top engagement-score
+# picks for the week; the rest fill in with the next-best clips so the
+# batch still reaches WEEKLY_REVIEW_BATCH_MIN even with few "hottest"
+# candidates available.
+WEEKLY_REVIEW_TOP_PICK_COUNT = int(os.environ.get("WEEKLY_REVIEW_TOP_PICK_COUNT", "12"))
+WEEKLY_REVIEW_VOTE_WEIGHT = int(os.environ.get("WEEKLY_REVIEW_VOTE_WEIGHT", "3"))
+WEEKLY_REVIEW_DIVERGENCE_WEIGHT = int(os.environ.get("WEEKLY_REVIEW_DIVERGENCE_WEIGHT", "6"))
+# How much a net feedback_score point (see the clips table) shifts a
+# clip's composite engagement_score, which is on a roughly [-2, +2]
+# z-score scale -- kept small by default so a handful of weekly votes
+# nudge ranking rather than swamp it outright.
+FEEDBACK_SCORE_WEIGHT = float(os.environ.get("FEEDBACK_SCORE_WEIGHT", "0.5"))
 
 # --- composite engagement scoring (compilation clip ranking) ---------------
 # Per-platform z-score normalized weighted sum -- see scraper/engagement.py.

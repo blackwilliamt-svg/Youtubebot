@@ -10,6 +10,14 @@ mean/stddev (a z-score) across likes, comments, and shares, weighted
 (config.ENGAGEMENT_WEIGHT_*, default 0.5/0.3/0.2) -- so a TikTok clip
 with 40k likes isn't automatically ranked over a Reddit clip with 4k
 upvotes just because TikTok's numbers run bigger across the board.
+
+Also folds in `clips.feedback_score` (config.FEEDBACK_SCORE_WEIGHT,
+default 0.5) -- the weighted human-feedback signal from the weekly
+review loop (scraper/weekly_review.py). Unlike likes/comments/shares,
+feedback_score is not z-scored against platform history: it's already a
+small, hand-shaped +/- number (weighted votes -- see
+config.WEEKLY_REVIEW_VOTE_WEIGHT/WEEKLY_REVIEW_DIVERGENCE_WEIGHT), so
+it's added directly, scaled by its own weight.
 """
 import logging
 
@@ -43,6 +51,8 @@ def compute_and_store(clip_id: int) -> float:
     for field, weight in weights:
         mean, stddev = stats.get(field, (0.0, 0.0))
         score += weight * _zscore(clip.get(field) or 0.0, mean, stddev)
+
+    score += config.FEEDBACK_SCORE_WEIGHT * (clip.get("feedback_score") or 0.0)
 
     db.set_clip_engagement_score(clip_id, score)
     log.debug("Engagement score for clip id=%d (%s): %.3f", clip_id, clip["source"], score)
