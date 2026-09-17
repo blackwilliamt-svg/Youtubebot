@@ -11,7 +11,7 @@ the tail end of scraper/downloader.py's video path, reused via its
 compress_video/make_thumbnail/probe_duration re-exports.
 
     from manual_upload import import_file, ManualUploadError
-    clip_id = import_file(Path("/tmp/upload123.mp4"), "myclip.mov", category="wins")
+    clip_id = import_file(Path("/tmp/upload123.mp4"), "myclip.mov", category="funny-viral")
 
 Lands as triaged=1 (skips /triage) -- it's footage you chose and uploaded
 on purpose, so there's no need to re-approve it; it shows up directly in

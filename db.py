@@ -12,6 +12,18 @@ from datetime import datetime, timedelta, timezone
 import config
 
 
+# Retired six-category scheme -> the current three. Used by _migrate() to
+# bring an existing droplet's curated lists onto the new categories; see
+# scraper/subreddits.py's CATEGORIES for the live set.
+LEGACY_CATEGORY_MAP = {
+    "animals": "funny-viral",
+    "gaming": "funny-viral",
+    "wins": "funny-viral",
+    "oddly-satisfying": "funny-viral",
+    "mildly-infuriating": "funny-viral",
+}
+
+
 def _connect():
     conn = sqlite3.connect(config.DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
@@ -104,6 +116,19 @@ def _migrate():
                 "INSERT OR IGNORE INTO search_terms (term, category, added_at) "
                 "SELECT hashtag, category, added_at FROM tiktok_hashtags"
             )
+
+        # The six-category scheme (animals/gaming/wins/oddly-satisfying/
+        # mildly-infuriating) was retired in favour of three
+        # (funny-viral/fails/political-satire). Rows carried over from an
+        # existing droplet -- both the hashtags just migrated above and the
+        # curated `subreddits` list -- still hold the retired names, and a
+        # retired category on a search term propagates onto every clip that
+        # term goes on to pull. Remap them in place. Historical `clips` rows
+        # are deliberately left alone (that's a record of what actually
+        # happened; the dashboard still groups them fine).
+        for old, new in LEGACY_CATEGORY_MAP.items():
+            conn.execute("UPDATE search_terms SET category = ? WHERE category = ?", (new, old))
+            conn.execute("UPDATE subreddits SET category = ? WHERE category = ?", (new, old))
 
         # One-time backfill: seed triage_stats' "keeps" side from clips that
         # were already triaged=1 before this feature existed. Rejected

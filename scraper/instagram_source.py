@@ -8,8 +8,10 @@ to reels -- the query rotation below is the direct equivalent of Vimeo's
 old per-category keyword rotation, just fed through Bright Data's
 trigger/poll/fetch dataset flow (scraper/brightdata_client.py).
 
-Kept as the smaller of the two "search" sources (Reddit still does the
-heavy lifting) -- one keyword search per hourly run, rotated by category.
+Per run this sends the hour-rotated built-in query below PLUS that
+category's terms from the unified Search Parameters list
+(scraper/search_terms.py -- the same list Reddit and TikTok search), all
+in one trigger/poll/fetch round trip.
 """
 import logging
 import re
@@ -18,6 +20,7 @@ from datetime import datetime, timezone
 import config
 from scraper.brightdata_client import run_collection
 from scraper.candidate import Candidate
+from scraper.search_terms import terms_for_category
 
 log = logging.getLogger("meme_pipeline.instagram")
 
@@ -106,23 +109,28 @@ def _candidate_from_row(row: dict, category: str) -> Candidate | None:
     )
 
 
-def _search(query: str, category: str) -> list[Candidate]:
-    inputs = [{"keyword": query, "post_type": "reel"}]
+def _search(queries: list[str], category: str) -> list[Candidate]:
+    """One reels-only keyword input per query, all in one collection run."""
+    queries = list(dict.fromkeys(q for q in queries if q))  # de-dup, preserve order
+    if not queries:
+        return []
+    inputs = [{"keyword": q, "post_type": "reel"} for q in queries]
     rows = run_collection(config.BRIGHTDATA_INSTAGRAM_DATASET_ID, inputs)
     candidates = [c for c in (_candidate_from_row(row, category) for row in rows) if c]
-    log.info("Instagram: gathered %d candidates for query %r", len(candidates), query)
+    log.info("Instagram: gathered %d candidates for %d query/queries (category=%s)",
+              len(candidates), len(queries), category)
     return candidates
 
 
 def gather_candidates() -> list[Candidate]:
-    """Hourly job: one hour-rotated search query."""
+    """Hourly job: the hour-rotated built-in query plus that category's
+    terms from the unified Search Parameters list."""
     query, category = SEARCH_QUERIES[datetime.now(timezone.utc).hour % len(SEARCH_QUERIES)]
-    return _search(query, category)
+    return _search([query] + terms_for_category(category), category)
 
 
 def gather_for_category(category: str) -> list[Candidate]:
-    """Manual test-snapshot: search using that category's query, regardless of the hour."""
+    """Manual test-snapshot: this category's built-in query (if it has one)
+    plus its unified search terms, regardless of the hour."""
     query = QUERY_BY_CATEGORY.get(category)
-    if not query:
-        return []
-    return _search(query, category)
+    return _search(([query] if query else []) + terms_for_category(category), category)

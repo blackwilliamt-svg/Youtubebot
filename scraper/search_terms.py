@@ -38,9 +38,28 @@ DEFAULT_SEARCH_TERMS.update({t: "fails" for t in _FAILS_TERMS})
 DEFAULT_SEARCH_TERMS.update({t: "political-satire" for t in _POLITICAL_SATIRE_TERMS})
 
 
+_SEEDED_FLAG = "search_terms_seeded"
+
+
 def _ensure_seeded():
-    if not db.has_any_search_terms():
-        db.bulk_seed_search_terms(DEFAULT_SEARCH_TERMS)
+    """Seeds DEFAULT_SEARCH_TERMS exactly once, tracked by a flag in the
+    settings table rather than by "is the table empty?".
+
+    Two reasons for the flag. First, an existing droplet upgrading to the
+    unified list already has rows in `search_terms` (db.py's _migrate()
+    folds its curated TikTok hashtags in), so an emptiness check would
+    skip the starter set entirely and leave it with just a handful of old
+    hashtags. Second, an emptiness check would silently re-seed all 27
+    starter terms the moment the adaptive system (or you) pruned the list
+    down to nothing -- which is a legitimate state to be in, not a reason
+    to undo the pruning.
+
+    The seed itself is INSERT OR IGNORE, so it never overwrites the
+    category on a term that's already there."""
+    if db.get_setting_value(_SEEDED_FLAG):
+        return
+    db.bulk_seed_search_terms(DEFAULT_SEARCH_TERMS)
+    db.set_setting(_SEEDED_FLAG, "1")
 
 
 def list_all_terms() -> list[str]:

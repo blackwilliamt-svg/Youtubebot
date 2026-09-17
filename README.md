@@ -52,23 +52,30 @@ Reddit/TikTok/Instagram directly -- one shared bearer token, one dataset id
 per source, trigger→poll→fetch per collection run. See "Credentials
 you'll need to provide" below.
 
+All three sources read the same unified search-term list
+(`scraper/search_terms.py` -> the `search_terms` DB table, editable at
+`/search-parameters`).
+
 ```
-scraper/run_hourly.py   systemd timer, hourly -- pulls TWO items/run
-  ├─ reddit_source.py     Bright Data Reddit Scraper API, hot listing across
-  │                       29 curated subreddits, classifies each post as
-  │                       video / image / gif
+scraper/run_hourly.py   systemd timer, hourly -- pulls ONE video per platform
+  ├─ reddit_source.py     Bright Data Reddit Scraper API, keyword search
+  │                       (one input per search term, sorted "hot"),
+  │                       classifies each post as video / image / gif
   ├─ tiktok_source.py     Bright Data TikTok Scraper API: a trending query
-  │                       per mapped category + 1 hour-rotated category
-  │                       query/hashtag search (video only)
-  ├─ instagram_source.py  Bright Data Instagram Scraper API, 1 reels-only
-  │                       keyword search/run (video only)
-  └─ rank.py               picks the single highest "velocity" candidate
-       (engagement / hours-since-posted) in EACH of two separate pools --
-       video, and image/gif -- that hasn't been pulled in the last 24h
+  │                       per category + 1 hour-rotated category query,
+  │                       plus that category's search terms (video only)
+  ├─ instagram_source.py  Bright Data Instagram Scraper API, reels-only
+  │                       keyword search: hour-rotated query + that
+  │                       category's search terms (video only)
+  └─ rank.py               per platform, picks the highest "velocity"
+       candidate (engagement / hours-since-posted) not pulled in the last 24h
      -> downloader.py: yt-dlp for video, plain HTTP for image/gif,
         ffmpeg compress/normalize + thumbnail, stored at
         media/YYYY-MM-DD/<category>/, JSON sidecar for provenance,
         row in SQLite `clips` (tagged media_type, triaged=0)
+     -> analyzer/: motion-sampled frames + Whisper transcript -> local
+        vision model -> freeform tags saved on the clip row
+     -> engagement.py: per-platform z-score composite score on the row
 
 scraper/snapshot.py     manual "Run Test Snapshot" button -- same ranking
                         and dedup, but scoped one category at a time
@@ -92,13 +99,15 @@ app.py (Flask, gunicorn)      dashboard, bound to 127.0.0.1:8080 only
   ├─ /build                    sequencer: add clips/images/GIFs + manual
   │                            library/reactions/ clips, reorder with
   │                            ▲▼, submit -> background compiler/build.py
-  ├─ /compilations             preview finished MP4s, upload to YouTube
-  ├─ /subreddits                add/remove what the hourly scraper pulls
-  │                            from -- writes through to the `subreddits`
-  │                            DB table, not the hardcoded seed dict
-  ├─ /tiktok-hashtags           add/remove TikTok hashtag/keyword search
-  │                            terms per category -- same pattern as
-  │                            /subreddits, its own DB table
+  ├─ /compilations             preview finished MP4s, upload to YouTube,
+  │                            and trigger the automated straight-cut
+  │                            builder by hand
+  ├─ /search-parameters        the unified search-term list every platform
+  │                            searches (plus the adaptive "preferred
+  │                            subreddits" origin list) -- writes through
+  │                            to DB tables, not the hardcoded seed dicts
+  ├─ /settings                 API credentials + the clip-selection
+  │                            autonomy dial (manual/assisted/autonomous)
   ├─ /stats                    read-only /triage keep/reject approval
   │                            rates -- Reddit per subreddit, TikTok and
   │                            Instagram each as one source-wide line
@@ -115,12 +124,19 @@ compiler/
   │                ffmpeg (no external audio assets -- avoids any
   │                licensing question entirely); library.py's picks take
   │                priority, this is just the always-available fallback
-  └─ build.py      turns any image/GIF in the sequence into a short
-                   silent video slide, scales/pads everything to
-                   720x1280 (9:16), crossfades video+audio at each cut
-                   (ffmpeg xfade/acrossfade), layers a sfx on every cut,
-                   ducks in background music under segments with no
-                   native audio, hard-caps at 58s, single mp4 out
+  ├─ build.py      MANUAL /build path: turns any image/GIF in the
+  │                sequence into a short silent video slide, scales/pads
+  │                everything to 720x1280 (9:16), crossfades video+audio
+  │                at each cut (ffmpeg xfade/acrossfade), layers a sfx on
+  │                every cut, ducks in background music under segments
+  │                with no native audio, hard-caps at 58s, single mp4 out
+  └─ auto_build.py AUTOMATED path (independent of build.py): picks clips
+                   by composite engagement score until total runtime
+                   lands in a 60-90s window, then concatenates them with
+                   STRAIGHT CUTS ONLY -- no transitions, sfx, music, or
+                   text overlays. Gated by autonomy.py's trust dial;
+                   clips it uses are marked 'used', never deleted, so a
+                   future longer-form compilation can reuse them.
 ```
 
 Everything shares one advisory file lock (`lockutil.py`) so the hourly

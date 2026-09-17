@@ -1,14 +1,19 @@
 """
 Manual "Run Test Snapshot" button (see app.py's /snapshot/run). For each
-of the 6 categories, pulls the single top-ranked video AND the single
-top-ranked image/GIF currently trending in that category's subreddits
-(plus TikTok/Instagram's per-category query) -- a one-time snapshot, not a
-simulated 24h run. Reuses the exact same ranking (scraper/rank.py) and
-per-source rate-limit backoff already used by the hourly job, and the
-same 24h dedup log, so it can't double-pull something the hourly job
-already grabbed. Categories are processed strictly one at a time with a
-delay between them (SNAPSHOT_CATEGORY_DELAY_SEC) rather than firing all 6
-API calls at once, to stay gentle on rate limits.
+category, pulls the single top-ranked video AND the single top-ranked
+image/GIF currently trending for that category's search terms across all
+three platforms -- a one-time snapshot, not a simulated 24h run. Reuses
+the exact same ranking (scraper/rank.py) and per-source rate-limit
+backoff already used by the hourly job, and the same 24h dedup log, so it
+can't double-pull something the hourly job already grabbed. Categories
+are processed strictly one at a time with a delay between them
+(SNAPSHOT_CATEGORY_DELAY_SEC) rather than firing every API call at once,
+to stay gentle on rate limits.
+
+Note this is deliberately a heavier pass than the hourly job (which pulls
+one video per platform): the snapshot goes per category AND pulls an
+image/GIF alongside each video, so it burns proportionally more Bright
+Data credits -- it's a test button, not something to run on a schedule.
 """
 import logging
 import time

@@ -64,7 +64,11 @@ def select_clips_for_compilation() -> list[dict]:
         dur = clip.get("duration_sec") or (config.SLIDE_DURATION_SEC if clip["media_type"] != "video" else 0.0)
         if dur <= 0:
             continue
-        if chosen and total + dur > config.AUTO_COMPILATION_MAX_SEC:
+        # A single clip longer than the whole target window can never fit --
+        # skip it outright rather than letting it through as the first pick.
+        # (New clips are capped at MAX_CLIP_DURATION_SEC, but a DB that
+        # predates that cap being lowered can still hold long ones.)
+        if total + dur > config.AUTO_COMPILATION_MAX_SEC:
             continue  # skip this one, keep looking for something that still fits
         chosen.append(clip)
         total += dur
